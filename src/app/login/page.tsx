@@ -10,7 +10,7 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const ruoter = useRouter();
+  const router = useRouter();
 
   const handleSubmit = async(e: React.FormEvent) => {
     e.preventDefault();
@@ -23,7 +23,7 @@ export default function Login() {
     if (error) {
       setError(error.message);
     } else {
-      ruoter.push('/dashboard');
+      router.push('/dashboard');
     }
     setLoading(false);
   }
