@@ -12,7 +12,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
-  const handleSubmit = async(e: React.FormEvent) => {
+  const handleSubmit = async(e: React.SubmitEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
