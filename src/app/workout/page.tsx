@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import type { NewWorkout, NewWorkoutSet } from '@/types';
+import { useRouter } from 'next/navigation';
+import { createClient } from '@/lib/supabase/client';
 
 interface ExerciseEntry {
   name: string;
@@ -11,7 +12,10 @@ interface ExerciseEntry {
 const defaultSet = () => ({ reps: 0, weight: 0 });
 
 export default function WorkoutForm() {
+  const router = useRouter();
   const [workoutName, setWorkoutName] = useState('');
+  const [duration, setDuration] = useState('');
+  const [rpe, setRpe] = useState('');
   const [exercises, setExercises] = useState<ExerciseEntry[]>([
     { name: '', sets: [defaultSet()] },
   ]);
@@ -68,25 +72,68 @@ export default function WorkoutForm() {
     setExercises(prev => prev.filter((_, i) => i !== exIdx));
   };
 
-  const buildWorkout = (): NewWorkout => ({
-    name: workoutName,
-    sets: exercises.flatMap((ex, exIdx) =>
-      ex.sets.map(
-        (s, setIdx): NewWorkoutSet => ({
-          exercise_id: '',
-          exercise_name: ex.name,
-          set_number: setIdx + 1,
-          reps: s.reps,
-          weight: s.weight,
-        })
-      )
-    ),
-  });
-
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.SubmitEvent) => {
     e.preventDefault();
-    const workout = buildWorkout();
-    console.log('Workout:', workout);
+    const supabase = createClient();
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const { data: workout, error: workoutError } = await supabase
+      .from('workouts')
+      .insert({ name: workoutName, user_id: user.id, duration: duration ? parseInt(duration) * 60 : 0, rpe: rpe ? parseFloat(rpe) : null })
+      .select('id')
+      .single();
+
+    if (workoutError || !workout) {
+      console.error(workoutError);
+      return;
+    }
+
+    const sets = [];
+    for (let exIdx = 0; exIdx < exercises.length; exIdx++) {
+      const ex = exercises[exIdx];
+
+      const { data: existing } = await supabase
+        .from('exercises')
+        .select('id')
+        .eq('name', ex.name)
+        .maybeSingle();
+
+      let exerciseId: string;
+      if (existing) {
+        exerciseId = existing.id;
+      } else {
+        const { data: newEx, error: exError } = await supabase
+          .from('exercises')
+          .insert({ name: ex.name })
+          .select('id')
+          .single();
+        if (exError || !newEx) { console.error(exError); return; }
+        exerciseId = newEx.id;
+      }
+
+      const { data: workoutExercise, error: weError } = await supabase
+        .from('workout_exercises')
+        .insert({ workout_id: workout.id, exercise_id: exerciseId, order: exIdx + 1 })
+        .select('id')
+        .single();
+      if (weError || !workoutExercise) { console.error(weError); return; }
+
+      for (let i = 0; i < ex.sets.length; i++) {
+        sets.push({
+          workout_exercise_id: workoutExercise.id,
+          set_number: i + 1,
+          reps: ex.sets[i].reps,
+          weight: ex.sets[i].weight,
+        });
+      }
+    }
+
+    const { error: setsError } = await supabase.from('workout_sets').insert(sets);
+    if (setsError) { console.error(setsError); return; }
+
+    router.push('/dashboard');
   };
 
   return (
@@ -203,6 +250,32 @@ export default function WorkoutForm() {
           >
             + Add exercise
           </button>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-gray-700">RPE of session (1–10)</label>
+            <input
+              type="number"
+              min={1}
+              max={10}
+              step={0.5}
+              value={rpe}
+              onChange={e => setRpe(e.target.value)}
+              placeholder="e.g. 7"
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-gray-700">Duration (minutes)</label>
+            <input
+              type="number"
+              min={0}
+              value={duration}
+              onChange={e => setDuration(e.target.value)}
+              placeholder="e.g. 60"
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+            />
+          </div>
 
           <button
             type="submit"
