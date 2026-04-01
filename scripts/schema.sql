@@ -9,6 +9,7 @@ create table workouts (
     id uuid primary key default uuid_generate_v4(),
     user_id uuid not null references auth.users(id) on delete cascade,
     name text not null,
+    duration integer not null,
     created_at timestamptz default now()
 );
 
@@ -19,6 +20,7 @@ create table workout_sets(
     set_number integer not null,
     weight numeric not null,
     reps integer not null,
+    notes text,
     created_at timestamptz default now()
 
 );
