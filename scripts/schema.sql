@@ -30,14 +30,12 @@ create table workout_exercises (
     id uuid primary key default uuid_generate_v4(),
     workout_id uuid not null references workouts(id) on delete cascade,
     exercise_id uuid not null references exercises(id) on delete cascade,
-    order integer not null
+    exercise_order integer not null
 );
 
 
 create table workout_sets(
     id uuid primary key default uuid_generate_v4(),
-    workout_id uuid not null references workouts(id) on delete cascade,
-    exercise_id uuid not null references exercises(id) on delete cascade,
     workout_exercise_id uuid not null references workout_exercises(id) on delete cascade,
     set_number integer not null,
     weight numeric not null,

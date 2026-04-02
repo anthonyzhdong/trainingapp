@@ -19,6 +19,8 @@ export default function WorkoutForm() {
   const [exercises, setExercises] = useState<ExerciseEntry[]>([
     { name: '', sets: [defaultSet()] },
   ]);
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const addExercise = () => {
     setExercises(prev => [...prev, { name: '', sets: [defaultSet()] }]);
@@ -72,68 +74,87 @@ export default function WorkoutForm() {
     setExercises(prev => prev.filter((_, i) => i !== exIdx));
   };
 
-  const handleSubmit = async (e: React.SubmitEvent) => {
+  const handleSubmit = async (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const supabase = createClient();
+    setError(null);
+    setSubmitting(true);
 
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    try {
+      const supabase = createClient();
 
-    const { data: workout, error: workoutError } = await supabase
-      .from('workouts')
-      .insert({ name: workoutName, user_id: user.id, duration: duration ? parseInt(duration) * 60 : 0, rpe: rpe ? parseFloat(rpe) : null })
-      .select('id')
-      .single();
-
-    if (workoutError || !workout) {
-      console.error(workoutError);
-      return;
-    }
-
-    const sets = [];
-    for (let exIdx = 0; exIdx < exercises.length; exIdx++) {
-      const ex = exercises[exIdx];
-
-      const { data: existing } = await supabase
-        .from('exercises')
-        .select('id')
-        .eq('name', ex.name)
-        .maybeSingle();
-
-      let exerciseId: string;
-      if (existing) {
-        exerciseId = existing.id;
-      } else {
-        const { data: newEx, error: exError } = await supabase
-          .from('exercises')
-          .insert({ name: ex.name })
-          .select('id')
-          .single();
-        if (exError || !newEx) { console.error(exError); return; }
-        exerciseId = newEx.id;
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setError('You must be logged in to save a workout.');
+        return;
       }
 
-      const { data: workoutExercise, error: weError } = await supabase
-        .from('workout_exercises')
-        .insert({ workout_id: workout.id, exercise_id: exerciseId, order: exIdx + 1 })
+      const { data: workout, error: workoutError } = await supabase
+        .from('workouts')
+        .insert({ name: workoutName, user_id: user.id, duration: duration ? parseInt(duration) * 60 : 0, rpe: rpe ? parseFloat(rpe) : null })
         .select('id')
         .single();
-      if (weError || !workoutExercise) { console.error(weError); return; }
 
-      for (let i = 0; i < ex.sets.length; i++) {
-        sets.push({
-          workout_exercise_id: workoutExercise.id,
-          set_number: i + 1,
-          reps: ex.sets[i].reps,
-          weight: ex.sets[i].weight,
-        });
+      if (workoutError || !workout) {
+        setError(workoutError?.message ?? 'Failed to save workout.');
+        return;
       }
+
+      const sets = [];
+      for (let exIdx = 0; exIdx < exercises.length; exIdx++) {
+        const ex = exercises[exIdx];
+
+        const { data: existing } = await supabase
+          .from('exercises')
+          .select('id')
+          .eq('name', ex.name)
+          .maybeSingle();
+
+        let exerciseId: string;
+        if (existing) {
+          exerciseId = existing.id;
+        } else {
+          const { data: newEx, error: exError } = await supabase
+            .from('exercises')
+            .insert({ name: ex.name })
+            .select('id')
+            .single();
+          if (exError || !newEx) {
+            setError(exError?.message ?? 'Failed to save exercise.');
+            return;
+          }
+          exerciseId = newEx.id;
+        }
+
+        const { data: workoutExercise, error: weError } = await supabase
+          .from('workout_exercises')
+          .insert({ workout_id: workout.id, exercise_id: exerciseId, exercise_order: exIdx + 1 })
+          .select('id')
+          .single();
+        if (weError || !workoutExercise) {
+          setError(weError?.message ?? 'Failed to save workout exercise.');
+          return;
+        }
+
+        for (let i = 0; i < ex.sets.length; i++) {
+          sets.push({
+            workout_exercise_id: workoutExercise.id,
+            set_number: i + 1,
+            reps: ex.sets[i].reps,
+            weight: ex.sets[i].weight,
+          });
+        }
+      }
+
+      const { error: setsError } = await supabase.from('workout_sets').insert(sets);
+      if (setsError) {
+        setError(setsError.message);
+        return;
+      }
+
+      router.push('/dashboard');
+    } finally {
+      setSubmitting(false);
     }
-
-    const { error: setsError } = await supabase.from('workout_sets').insert(sets);
-    if (setsError) { console.error(setsError); return; }
-
-    router.push('/dashboard');
   };
 
   return (
@@ -277,11 +298,16 @@ export default function WorkoutForm() {
             />
           </div>
 
+          {error && (
+            <p className="text-sm text-red-600">{error}</p>
+          )}
+
           <button
             type="submit"
-            className="bg-gray-900 text-white rounded-lg py-2 text-sm font-medium hover:bg-gray-700 transition-colors"
+            disabled={submitting}
+            className="bg-gray-900 text-white rounded-lg py-2 text-sm font-medium hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Save workout
+            {submitting ? 'Saving...' : 'Save workout'}
           </button>
         </form>
       </div>
