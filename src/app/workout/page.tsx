@@ -4,14 +4,23 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 
+import { usePathname } from 'next/navigation';
+import Link from 'next/dist/client/link';
+
 interface ExerciseEntry {
   name: string;
   sets: { reps: number; weight: number }[];
 }
 
+const navItems = [
+  { label: 'Add Workout', href: '/workout' },
+  { label: 'History', href: '/history' },
+];
+
 const defaultSet = () => ({ reps: 0, weight: 0 });
 
 export default function WorkoutForm() {
+  const pathname = usePathname();
   const router = useRouter();
   const [workoutName, setWorkoutName] = useState('');
   const [duration, setDuration] = useState('');
@@ -158,8 +167,29 @@ export default function WorkoutForm() {
   };
 
   return (
+
+
+    
     <div className="min-h-screen bg-gray-50 px-4 py-10">
+        {/* Sidebar */}
+      <aside className="w-52 bg-white border-r border-gray-200 flex flex-col py-6 px-3 gap-1">
+        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-3 mb-3">Menu</p>
+        {navItems.map(item => (
+          <Link
+            key={item.href}
+            href={item.href}
+            className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+              pathname === item.href
+                ? 'bg-gray-900 text-white'
+                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+            }`}
+          >
+            {item.label}
+          </Link>
+        ))}
+      </aside>
       <div className="max-w-xl mx-auto">
+        
         <h1 className="text-2xl font-semibold text-gray-900 mb-1">Log Workout</h1>
         <p className="text-sm text-gray-500 mb-6">Add your exercises, sets, reps, and weight.</p>
 
