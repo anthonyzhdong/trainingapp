@@ -15,6 +15,7 @@ interface ExerciseEntry {
 const navItems = [
   { label: 'Add Workout', href: '/workout' },
   { label: 'History', href: '/history' },
+  { label: 'Profile', href: '/profile' },
 ];
 
 const defaultSet = () => ({ reps: 0, weight: 0 });

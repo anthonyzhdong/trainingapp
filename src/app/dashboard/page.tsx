@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 const navItems = [
   { label: 'Add Workout', href: '/workout' },
   { label: 'History', href: '/history' },
+  { label: 'Profile', href: '/profile' },
 ];
 
 export default function Dashboard() {

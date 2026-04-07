@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/client';
 const navItems = [
   { label: 'Add Workout', href: '/workout' },
   { label: 'History', href: '/history' },
+  { label: 'Profile', href: '/profile' },
 ];
 
 interface SetRow {
