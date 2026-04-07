@@ -18,6 +18,7 @@ interface ProfileForm {
   height: string;
   sex: string;
   weight: string;
+  activity_level: string;
 }
 
 export default function ProfilePage() {
@@ -29,6 +30,7 @@ export default function ProfilePage() {
     height: '',
     sex: '',
     weight: '',
+    activity_level: '',
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -45,7 +47,7 @@ export default function ProfilePage() {
       }
       const { data } = await supabase
         .from('profile')
-        .select('first_name, age, height, sex, weight')
+        .select('first_name, age, height, sex, weight,activity_level')
         .eq('user_id', user.id)
         .maybeSingle();
       if (data) {
@@ -55,6 +57,7 @@ export default function ProfilePage() {
           height: data.height != null ? String(data.height) : '',
           sex: data.sex ?? '',
           weight: data.weight != null ? String(data.weight) : '',
+          activity_level: data.activity_level ?? '',
         });
       }
       setLoading(false);
@@ -88,6 +91,7 @@ export default function ProfilePage() {
         height: form.height ? parseFloat(form.height) : null,
         sex: form.sex || null,
         weight: form.weight ? parseFloat(form.weight) : null,
+        activity_level: form.activity_level || null,
       };
 
       const { error: upsertError } = await supabase
@@ -205,6 +209,24 @@ export default function ProfilePage() {
                 placeholder="e.g. 75"
                 className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
               />
+            </div>
+
+            {/* Activity level */}
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-medium text-gray-700">Daily activity level</label>
+              <select
+                name="activity_level"
+                value={form.activity_level}
+                onChange={handleChange}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 bg-white"
+              >
+                <option value="">Select...</option>
+                <option value="sedentary">Sedentary – desk job, little daily movement</option>
+                <option value="lightly_active">Lightly Active – light walking, standing job</option>
+                <option value="moderately_active">Moderately Active – some manual work or walking</option>
+                <option value="very_active">Very Active – tradesperson, construction</option>
+                <option value="extra_active">Extra Active – very hard physical labour all day</option>
+              </select>
             </div>
 
             {error && <p className="text-sm text-red-600">{error}</p>}

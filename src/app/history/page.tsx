@@ -4,6 +4,13 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import {
+  calculateBMR,
+  calculateWorkoutKcal,
+  calculateTDEE,
+  ACTIVITY_LABELS,
+  ACTIVITY_MULTIPLIERS,
+} from '@/lib/calories';
 
 const navItems = [
   { label: 'Add Workout', href: '/workout' },
@@ -31,6 +38,14 @@ interface Workout {
   created_at: string;
   duration: number;
   rpe: number | null;
+}
+
+interface Profile {
+  weight: number | null;
+  height: number | null;
+  age: number | null;
+  sex: string | null;
+  activity_level: string | null;
 }
 
 // Calendar constants
@@ -92,17 +107,27 @@ export default function HistoryPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, ExerciseRow[]>>({});
   const [detailLoading, setDetailLoading] = useState(false);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [selectedDayIdx, setSelectedDayIdx] = useState<number | null>(null);
 
   useEffect(() => {
     const supabase = createClient();
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) return;
-      const { data } = await supabase
-        .from('workouts')
-        .select('id, name, created_at, duration, rpe')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
-      setWorkouts(data ?? []);
+      const [{ data: workoutData }, { data: profileData }] = await Promise.all([
+        supabase
+          .from('workouts')
+          .select('id, name, created_at, duration, rpe')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('profile')
+          .select('weight, height, age, sex, activity_level')
+          .eq('user_id', user.id)
+          .maybeSingle(),
+      ]);
+      setWorkouts(workoutData ?? []);
+      setProfile(profileData ?? null);
       setLoading(false);
     });
   }, []);
@@ -175,26 +200,114 @@ export default function HistoryPage() {
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setWeekOffset(o => o - 1)}
+              onClick={() => { setWeekOffset(o => o - 1); setSelectedDayIdx(null); }}
               className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
             >
               ← Prev
             </button>
             <button
-              onClick={() => setWeekOffset(0)}
+              onClick={() => { setWeekOffset(0); setSelectedDayIdx(null); }}
               disabled={weekOffset === 0}
               className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               This week
             </button>
             <button
-              onClick={() => setWeekOffset(o => o + 1)}
+              onClick={() => { setWeekOffset(o => o + 1); setSelectedDayIdx(null); }}
               className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
             >
               Next →
             </button>
           </div>
         </div>
+
+        {/* TDEE card */}
+        {(() => {
+          const p = profile;
+          const profileComplete =
+            p &&
+            p.weight != null &&
+            p.height != null &&
+            p.age != null &&
+            p.sex &&
+            p.activity_level;
+
+          if (!profileComplete) {
+            return (
+              <div className="mb-5 bg-white rounded-2xl border border-gray-200 shadow-sm px-5 py-3">
+                <p className="text-sm text-gray-400">
+                  <Link href="/profile" className="underline text-gray-600 hover:text-gray-900">
+                    Complete your profile
+                  </Link>{' '}
+                  to see your daily calorie estimate.
+                </p>
+              </div>
+            );
+          }
+
+          const bmr = calculateBMR(p.weight!, p.height!, p.age!, p.sex!);
+          const multiplier = ACTIVITY_MULTIPLIERS[p.activity_level!];
+          const activityLabel = ACTIVITY_LABELS[p.activity_level!];
+
+          let workoutKcal: number;
+          let workoutLabel: string;
+          let cardTitle: string;
+
+          if (selectedDayIdx !== null) {
+            const dayWorkouts = byDay[selectedDayIdx] ?? [];
+            workoutKcal = calculateWorkoutKcal(dayWorkouts);
+            workoutLabel = `+${workoutKcal} kcal`;
+            cardTitle = `${DAY_LABELS[selectedDayIdx]} — Calorie Estimate`;
+          } else {
+            const allWeekWorkouts = Object.values(byDay).flat();
+            workoutKcal = Math.round(calculateWorkoutKcal(allWeekWorkouts) / 7);
+            workoutLabel = `+${workoutKcal} kcal/day avg`;
+            cardTitle = 'Weekly Average — Daily Calorie Estimate';
+          }
+
+          const tdee = calculateTDEE(bmr, p.activity_level!, workoutKcal);
+
+          return (
+            <div className="mb-5 bg-white rounded-2xl border border-gray-200 shadow-sm px-5 py-4">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{cardTitle}</p>
+                {selectedDayIdx !== null && (
+                  <button
+                    onClick={() => setSelectedDayIdx(null)}
+                    className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                  >
+                    Show weekly avg
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-4 flex-wrap">
+                <div>
+                  <p className="text-xs text-gray-400 mb-0.5">BMR</p>
+                  <p className="text-sm font-semibold text-gray-900">{bmr.toLocaleString()} kcal</p>
+                </div>
+                <span className="text-gray-300 text-sm">×</span>
+                <div>
+                  <p className="text-xs text-gray-400 mb-0.5">Lifestyle ({multiplier})</p>
+                  <p className="text-sm font-semibold text-gray-900">{activityLabel}</p>
+                </div>
+                {workoutKcal > 0 && (
+                  <>
+                    <span className="text-gray-300 text-sm">+</span>
+                    <div>
+                      <p className="text-xs text-gray-400 mb-0.5">{selectedDayIdx !== null ? 'Workout' : 'Workouts this week'}</p>
+                      <p className="text-sm font-semibold text-gray-900">{workoutLabel}</p>
+                    </div>
+                  </>
+                )}
+                <span className="text-gray-300 text-sm">=</span>
+                <div>
+                  <p className="text-xs text-gray-400 mb-0.5">Daily target</p>
+                  <p className="text-base font-bold text-gray-900">{tdee.toLocaleString()} kcal</p>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Calendar card */}
         <div className="flex-1 bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
@@ -204,18 +317,26 @@ export default function HistoryPage() {
             <div style={{ width: TIME_COL }} className="flex-shrink-0" />
             {weekDays.map((day, i) => {
               const isToday = day.toDateString() === todayStr;
+              const isSelected = selectedDayIdx === i;
               return (
-                <div
+                <button
                   key={i}
-                  className={`flex-1 text-center py-3 border-l border-gray-100 ${isToday ? 'bg-blue-50' : ''}`}
+                  onClick={() => setSelectedDayIdx(isSelected ? null : i)}
+                  className={`flex-1 text-center py-3 border-l border-gray-100 transition-colors ${
+                    isSelected ? 'bg-gray-900' : isToday ? 'bg-blue-50 hover:bg-blue-100' : 'hover:bg-gray-50'
+                  }`}
                 >
-                  <p className={`text-xs font-semibold uppercase tracking-wide ${isToday ? 'text-blue-600' : 'text-gray-400'}`}>
+                  <p className={`text-xs font-semibold uppercase tracking-wide ${
+                    isSelected ? 'text-white' : isToday ? 'text-blue-600' : 'text-gray-400'
+                  }`}>
                     {DAY_LABELS[i]}
                   </p>
-                  <p className={`text-lg font-semibold mt-0.5 leading-none ${isToday ? 'text-blue-600' : 'text-gray-800'}`}>
+                  <p className={`text-lg font-semibold mt-0.5 leading-none ${
+                    isSelected ? 'text-white' : isToday ? 'text-blue-600' : 'text-gray-800'
+                  }`}>
                     {day.getDate()}
                   </p>
-                </div>
+                </button>
               );
             })}
           </div>

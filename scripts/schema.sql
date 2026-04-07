@@ -8,6 +8,7 @@ create table profile (
     height numeric,
     sex text,
     weight numeric,
+    activity_level text,
     created_at timestamptz default now()
     updated_at timestamptz default now()
 )
@@ -44,6 +45,21 @@ create table workout_sets(
     created_at timestamptz default now()
 
 );
+
+CREATE TABLE planned_sessions (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       uuid REFERENCES auth.users NOT NULL,
+  name          text NOT NULL,
+  scheduled_date date NOT NULL,
+  scheduled_time time NOT NULL,
+  planned_duration integer NOT NULL,  -- minutes
+  intensity     integer CHECK (intensity BETWEEN 1 AND 10),
+  workout_type  text,                 -- e.g. 'strength', 'cardio', 'hiit'
+  estimated_calories integer,
+  linked_workout_id uuid REFERENCES workouts(id), -- set when user logs the actual session
+  created_at    timestamptz DEFAULT now()
+);
+
 
 
 create table daily_logs (
