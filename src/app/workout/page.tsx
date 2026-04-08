@@ -6,17 +6,12 @@ import { createClient } from '@/lib/supabase/client';
 
 import { usePathname } from 'next/navigation';
 import Link from 'next/dist/client/link';
+import Sidebar from '@/components/Sidebar';
 
 interface ExerciseEntry {
   name: string;
   sets: { reps: number; weight: number }[];
 }
-
-const navItems = [
-  { label: 'Add Workout', href: '/workout' },
-  { label: 'History', href: '/history' },
-  { label: 'Profile', href: '/profile' },
-];
 
 const defaultSet = () => ({ reps: 0, weight: 0 });
 
@@ -64,6 +59,11 @@ export default function WorkoutForm() {
   const [cycleElevLoss, setCycleElevLoss] = useState('');
   const [cycleRpe, setCycleRpe] = useState('');
   const [cycleNotes, setCycleNotes] = useState('');
+
+  const [workoutDate, setWorkoutDate] = useState<string>(
+  new Date().toISOString().slice(0, 16) // "YYYY-MM-DDTHH:mm"
+);
+
 
   // --- lifting helpers ---
   const addExercise = () => {
@@ -148,6 +148,7 @@ export default function WorkoutForm() {
             duration: durationSeconds,
             rpe: cycleRpe ? parseFloat(cycleRpe) : null,
             session_type: 'cycling',
+            created_at: new Date(workoutDate).toISOString(),
           })
           .select('id')
           .single();
@@ -313,23 +314,7 @@ export default function WorkoutForm() {
 
   return (
     <div className="min-h-screen bg-gray-50 px-4 py-10">
-      {/* Sidebar */}
-      <aside className="w-52 bg-white border-r border-gray-200 flex flex-col py-6 px-3 gap-1">
-        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-3 mb-3">Menu</p>
-        {navItems.map(item => (
-          <Link
-            key={item.href}
-            href={item.href}
-            className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-              pathname === item.href
-                ? 'bg-gray-900 text-white'
-                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
-            }`}
-          >
-            {item.label}
-          </Link>
-        ))}
-      </aside>
+      <Sidebar/>
 
       <div className="max-w-xl mx-auto">
         <h1 className="text-2xl font-semibold text-gray-900 mb-1">Log Session</h1>
@@ -509,6 +494,17 @@ export default function WorkoutForm() {
                   className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
                 />
               </div>
+
+              <div>
+                <label>Date & Time</label>
+                <input
+                  type="datetime-local"
+                  value={workoutDate}
+                  onChange={(e) => setWorkoutDate(e.target.value)}
+                  max={new Date().toISOString().slice(0, 16)} // prevent future dates
+                />
+              </div>
+
             </>
           )}
 
