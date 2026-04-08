@@ -18,6 +18,23 @@ create table exercises (
     name text not null
 );
 
+create table cycling_sessions (
+    id uuid primary key default uuid_generate_v4(),
+    workout_id uuid not null references workouts(id) on delete cascade,
+    distance numeric not null,           -- stored in user's chosen unit
+    unit_preference text default 'km',   -- 'km' or 'mi'
+    avg_speed numeric,                   -- km/h or mph matching unit_preference (derived)
+    avg_power integer,                   -- watts (from power meter)
+    avg_heart_rate integer,              -- bpm
+    max_heart_rate integer,              -- bpm
+    avg_cadence integer,                 -- rpm (rotations per minute)
+    elevation_gain numeric,              -- meters
+    elevation_loss numeric,              -- meters
+    ride_type text not null,             -- 'easy' | 'endurance' | 'tempo' | 'interval' | 'climb' | 'race'
+    rpe numeric check (rpe between 1 and 10),
+    notes text
+);
+
 create table workouts (
     id uuid primary key default uuid_generate_v4(),
     user_id uuid not null references auth.users(id) on delete cascade,

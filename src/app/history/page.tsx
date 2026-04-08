@@ -8,6 +8,7 @@ import {
   calculateBMR,
   calculateWorkoutKcal,
   calculateRunningKcal,
+  calculateCyclingKcal,
   calculateTDEE,
   ACTIVITY_LABELS,
   ACTIVITY_MULTIPLIERS,
@@ -39,7 +40,24 @@ interface Workout {
   created_at: string;
   duration: number;
   rpe: number | null;
-  session_type: 'lifting' | 'running';
+  session_type: 'lifting' | 'running' | 'cycling';
+}
+
+interface CyclingSession {
+  id: string;
+  workout_id: string;
+  distance: number;
+  unit_preference: 'km' | 'mi';
+  avg_speed: number | null;
+  avg_power: number | null;
+  avg_heart_rate: number | null;
+  max_heart_rate: number | null;
+  avg_cadence: number | null;
+  elevation_gain: number | null;
+  elevation_loss: number | null;
+  ride_type: string;
+  rpe: number | null;
+  notes: string | null;
 }
 
 interface RunningSession {
@@ -136,6 +154,7 @@ export default function HistoryPage() {
   const pathname = usePathname();
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [runningSessions, setRunningSessions] = useState<Record<string, RunningSession>>({});
+  const [cyclingSessions, setCyclingSessions] = useState<Record<string, CyclingSession>>({});
   const [loading, setLoading] = useState(true);
   const [weekOffset, setWeekOffset] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -166,23 +185,25 @@ export default function HistoryPage() {
       setWorkouts(allWorkouts);
       setProfile(profileData ?? null);
 
-      // Fetch running sessions for all running workouts
-      const runningIds = allWorkouts
-        .filter(w => w.session_type === 'running')
-        .map(w => w.id);
+      const runningIds = allWorkouts.filter(w => w.session_type === 'running').map(w => w.id);
+      const cyclingIds = allWorkouts.filter(w => w.session_type === 'cycling').map(w => w.id);
 
-      if (runningIds.length > 0) {
-        const { data: runData } = await supabase
-          .from('running_sessions')
-          .select('*')
-          .in('workout_id', runningIds);
-
-        const map: Record<string, RunningSession> = {};
-        for (const r of runData ?? []) {
-          map[r.workout_id] = r as RunningSession;
-        }
-        setRunningSessions(map);
-      }
+      await Promise.all([
+        runningIds.length > 0
+          ? supabase.from('running_sessions').select('*').in('workout_id', runningIds).then(({ data }) => {
+              const map: Record<string, RunningSession> = {};
+              for (const r of data ?? []) map[r.workout_id] = r as RunningSession;
+              setRunningSessions(map);
+            })
+          : Promise.resolve(),
+        cyclingIds.length > 0
+          ? supabase.from('cycling_sessions').select('*').in('workout_id', cyclingIds).then(({ data }) => {
+              const map: Record<string, CyclingSession> = {};
+              for (const r of data ?? []) map[r.workout_id] = r as CyclingSession;
+              setCyclingSessions(map);
+            })
+          : Promise.resolve(),
+      ]);
 
       setLoading(false);
     });
@@ -193,8 +214,8 @@ export default function HistoryPage() {
     setSelectedId(id);
 
     const workout = workouts.find(w => w.id === id);
-    // Running details are already loaded; only lazy-fetch for lifting
-    if (!workout || workout.session_type === 'running') return;
+    // Cardio details are already loaded upfront; only lazy-fetch for lifting
+    if (!workout || workout.session_type === 'running' || workout.session_type === 'cycling') return;
     if (details[id]) return;
 
     setDetailLoading(true);
@@ -226,6 +247,7 @@ export default function HistoryPage() {
   const selectedWorkout = selectedId ? workouts.find(w => w.id === selectedId) ?? null : null;
   const selectedExercises = selectedId ? details[selectedId] : undefined;
   const selectedRunning = selectedId ? runningSessions[selectedId] : undefined;
+  const selectedCycling = selectedId ? cyclingSessions[selectedId] : undefined;
 
   const hours = Array.from({ length: END_HOUR - START_HOUR }, (_, i) => START_HOUR + i);
 
@@ -236,10 +258,15 @@ export default function HistoryPage() {
       if (w.session_type === 'running') {
         const rs = runningSessions[w.id];
         if (rs && profileWeight) {
-          const km = toKm(rs.distance, rs.unit_preference);
-          total += calculateRunningKcal(km, profileWeight, rs.elevation_gain ?? 0);
-        } else if (w.rpe != null) {
-          // Fallback to RPE-based if running session data not loaded yet
+          total += calculateRunningKcal(toKm(rs.distance, rs.unit_preference), profileWeight, rs.elevation_gain ?? 0);
+        } else {
+          total += calculateWorkoutKcal([{ duration: w.duration, rpe: w.rpe }]);
+        }
+      } else if (w.session_type === 'cycling') {
+        const cs = cyclingSessions[w.id];
+        if (cs && profileWeight) {
+          total += calculateCyclingKcal(toKm(cs.distance, cs.unit_preference), profileWeight, cs.elevation_gain ?? 0, cs.avg_power, w.duration);
+        } else {
           total += calculateWorkoutKcal([{ duration: w.duration, rpe: w.rpe }]);
         }
       } else {
@@ -463,13 +490,23 @@ export default function HistoryPage() {
 
                   {dayWorkouts.map((w, wi) => {
                     const isSelected = selectedId === w.id;
-                    const isRunning = w.session_type === 'running';
                     const offset = wi * 3;
-                    const rs = isRunning ? runningSessions[w.id] : null;
+                    const rs = w.session_type === 'running' ? runningSessions[w.id] : null;
+                    const cs = w.session_type === 'cycling' ? cyclingSessions[w.id] : null;
 
-                    const baseColor = isRunning
-                      ? isSelected ? 'bg-gray-900 border-gray-900' : 'bg-emerald-500 border-emerald-500 hover:bg-emerald-600 hover:border-emerald-600'
-                      : isSelected ? 'bg-gray-900 border-gray-900' : 'bg-indigo-500 border-indigo-500 hover:bg-indigo-600 hover:border-indigo-600';
+                    const baseColor = isSelected
+                      ? 'bg-gray-900 border-gray-900'
+                      : w.session_type === 'running'
+                        ? 'bg-emerald-500 border-emerald-500 hover:bg-emerald-600 hover:border-emerald-600'
+                        : w.session_type === 'cycling'
+                          ? 'bg-amber-500 border-amber-500 hover:bg-amber-600 hover:border-amber-600'
+                          : 'bg-indigo-500 border-indigo-500 hover:bg-indigo-600 hover:border-indigo-600';
+
+                    const distLabel = rs
+                      ? formatDistance(rs.distance, rs.unit_preference)
+                      : cs
+                        ? formatDistance(cs.distance, cs.unit_preference)
+                        : null;
 
                     return (
                       <button
@@ -480,11 +517,9 @@ export default function HistoryPage() {
                       >
                         <p className="font-semibold leading-tight truncate">{w.name}</p>
                         <p className="opacity-75 mt-0.5">{timeLabel(w.created_at)}</p>
-                        {rs ? (
-                          <p className="opacity-75">{formatDistance(rs.distance, rs.unit_preference)}</p>
-                        ) : w.duration ? (
-                          <p className="opacity-75">{formatDuration(w.duration)}</p>
-                        ) : null}
+                        {distLabel
+                          ? <p className="opacity-75">{distLabel}</p>
+                          : w.duration ? <p className="opacity-75">{formatDuration(w.duration)}</p> : null}
                       </button>
                     );
                   })}
@@ -513,7 +548,9 @@ export default function HistoryPage() {
                   <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${
                     selectedWorkout.session_type === 'running'
                       ? 'bg-emerald-100 text-emerald-700'
-                      : 'bg-indigo-100 text-indigo-700'
+                      : selectedWorkout.session_type === 'cycling'
+                        ? 'bg-amber-100 text-amber-700'
+                        : 'bg-indigo-100 text-indigo-700'
                   }`}>
                     {selectedWorkout.session_type}
                   </span>
@@ -589,6 +626,71 @@ export default function HistoryPage() {
                   </div>
                   {selectedRunning.notes && (
                     <p className="text-sm text-gray-600 italic">{selectedRunning.notes}</p>
+                  )}
+                </div>
+              )}
+
+              {/* Cycling detail */}
+              {selectedWorkout.session_type === 'cycling' && selectedCycling && (
+                <div className="flex flex-col gap-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <div className="bg-gray-50 rounded-xl px-4 py-3">
+                      <p className="text-xs text-gray-400 mb-0.5">Distance</p>
+                      <p className="text-sm font-semibold text-gray-900">
+                        {formatDistance(selectedCycling.distance, selectedCycling.unit_preference)}
+                      </p>
+                    </div>
+                    {selectedCycling.avg_speed && (
+                      <div className="bg-gray-50 rounded-xl px-4 py-3">
+                        <p className="text-xs text-gray-400 mb-0.5">Avg speed</p>
+                        <p className="text-sm font-semibold text-gray-900">
+                          {selectedCycling.avg_speed} {selectedCycling.unit_preference}/h
+                        </p>
+                      </div>
+                    )}
+                    <div className="bg-gray-50 rounded-xl px-4 py-3">
+                      <p className="text-xs text-gray-400 mb-0.5">Type</p>
+                      <p className="text-sm font-semibold text-gray-900 capitalize">{selectedCycling.ride_type}</p>
+                    </div>
+                    {selectedCycling.avg_power && (
+                      <div className="bg-gray-50 rounded-xl px-4 py-3">
+                        <p className="text-xs text-gray-400 mb-0.5">Avg power</p>
+                        <p className="text-sm font-semibold text-gray-900">{selectedCycling.avg_power} W</p>
+                      </div>
+                    )}
+                    {selectedCycling.avg_heart_rate && (
+                      <div className="bg-gray-50 rounded-xl px-4 py-3">
+                        <p className="text-xs text-gray-400 mb-0.5">Avg HR</p>
+                        <p className="text-sm font-semibold text-gray-900">{selectedCycling.avg_heart_rate} bpm</p>
+                      </div>
+                    )}
+                    {selectedCycling.max_heart_rate && (
+                      <div className="bg-gray-50 rounded-xl px-4 py-3">
+                        <p className="text-xs text-gray-400 mb-0.5">Max HR</p>
+                        <p className="text-sm font-semibold text-gray-900">{selectedCycling.max_heart_rate} bpm</p>
+                      </div>
+                    )}
+                    {selectedCycling.avg_cadence && (
+                      <div className="bg-gray-50 rounded-xl px-4 py-3">
+                        <p className="text-xs text-gray-400 mb-0.5">Cadence</p>
+                        <p className="text-sm font-semibold text-gray-900">{selectedCycling.avg_cadence} rpm</p>
+                      </div>
+                    )}
+                    {selectedCycling.elevation_gain != null && (
+                      <div className="bg-gray-50 rounded-xl px-4 py-3">
+                        <p className="text-xs text-gray-400 mb-0.5">Elev gain</p>
+                        <p className="text-sm font-semibold text-gray-900">{selectedCycling.elevation_gain} m</p>
+                      </div>
+                    )}
+                    {selectedCycling.elevation_loss != null && (
+                      <div className="bg-gray-50 rounded-xl px-4 py-3">
+                        <p className="text-xs text-gray-400 mb-0.5">Elev loss</p>
+                        <p className="text-sm font-semibold text-gray-900">{selectedCycling.elevation_loss} m</p>
+                      </div>
+                    )}
+                  </div>
+                  {selectedCycling.notes && (
+                    <p className="text-sm text-gray-600 italic">{selectedCycling.notes}</p>
                   )}
                 </div>
               )}

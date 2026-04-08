@@ -21,13 +21,14 @@ const navItems = [
 const defaultSet = () => ({ reps: 0, weight: 0 });
 
 const RUN_TYPES = ['easy', 'tempo', 'interval', 'long', 'race'] as const;
+const CYCLE_TYPES = ['easy', 'endurance', 'tempo', 'interval', 'climb', 'race'] as const;
 
 export default function WorkoutForm() {
   const pathname = usePathname();
   const router = useRouter();
 
   // --- shared state ---
-  const [sessionType, setSessionType] = useState<'lifting' | 'running'>('lifting');
+  const [sessionType, setSessionType] = useState<'lifting' | 'running' | 'cycling'>('lifting');
   const [workoutName, setWorkoutName] = useState('');
   const [duration, setDuration] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -50,6 +51,19 @@ export default function WorkoutForm() {
   const [runElevLoss, setRunElevLoss] = useState('');
   const [runRpe, setRunRpe] = useState('');
   const [runNotes, setRunNotes] = useState('');
+
+  // --- cycling state ---
+  const [cycleDistance, setCycleDistance] = useState('');
+  const [cycleUnit, setCycleUnit] = useState<'km' | 'mi'>('km');
+  const [cycleType, setCycleType] = useState<string>('easy');
+  const [cycleAvgPower, setCycleAvgPower] = useState('');
+  const [cycleAvgHR, setCycleAvgHR] = useState('');
+  const [cycleMaxHR, setCycleMaxHR] = useState('');
+  const [cycleCadence, setCycleCadence] = useState('');
+  const [cycleElevGain, setCycleElevGain] = useState('');
+  const [cycleElevLoss, setCycleElevLoss] = useState('');
+  const [cycleRpe, setCycleRpe] = useState('');
+  const [cycleNotes, setCycleNotes] = useState('');
 
   // --- lifting helpers ---
   const addExercise = () => {
@@ -120,7 +134,57 @@ export default function WorkoutForm() {
 
       const durationSeconds = duration ? parseInt(duration) * 60 : 0;
 
-      if (sessionType === 'running') {
+      if (sessionType === 'cycling') {
+        if (!cycleDistance || parseFloat(cycleDistance) <= 0) {
+          setError('Please enter a valid distance.');
+          return;
+        }
+
+        const { data: workout, error: workoutError } = await supabase
+          .from('workouts')
+          .insert({
+            name: workoutName || `${cycleType.charAt(0).toUpperCase() + cycleType.slice(1)} ride`,
+            user_id: user.id,
+            duration: durationSeconds,
+            rpe: cycleRpe ? parseFloat(cycleRpe) : null,
+            session_type: 'cycling',
+          })
+          .select('id')
+          .single();
+
+        if (workoutError || !workout) {
+          setError(workoutError?.message ?? 'Failed to save workout.');
+          return;
+        }
+
+        const distanceNum = parseFloat(cycleDistance);
+        const avgSpeed = durationSeconds > 0 && distanceNum > 0
+          ? parseFloat((distanceNum / (durationSeconds / 3600)).toFixed(1))
+          : null;
+
+        const { error: cycleError } = await supabase
+          .from('cycling_sessions')
+          .insert({
+            workout_id: workout.id,
+            distance: distanceNum,
+            unit_preference: cycleUnit,
+            avg_speed: avgSpeed,
+            avg_power: cycleAvgPower ? parseInt(cycleAvgPower) : null,
+            avg_heart_rate: cycleAvgHR ? parseInt(cycleAvgHR) : null,
+            max_heart_rate: cycleMaxHR ? parseInt(cycleMaxHR) : null,
+            avg_cadence: cycleCadence ? parseInt(cycleCadence) : null,
+            elevation_gain: cycleElevGain ? parseFloat(cycleElevGain) : null,
+            elevation_loss: cycleElevLoss ? parseFloat(cycleElevLoss) : null,
+            ride_type: cycleType,
+            rpe: cycleRpe ? parseFloat(cycleRpe) : null,
+            notes: cycleNotes || null,
+          });
+
+        if (cycleError) {
+          setError(cycleError.message);
+          return;
+        }
+      } else if (sessionType === 'running') {
         if (!runDistance || parseFloat(runDistance) <= 0) {
           setError('Please enter a valid distance.');
           return;
@@ -269,7 +333,7 @@ export default function WorkoutForm() {
 
       <div className="max-w-xl mx-auto">
         <h1 className="text-2xl font-semibold text-gray-900 mb-1">Log Session</h1>
-        <p className="text-sm text-gray-500 mb-6">Track your lifting or running session.</p>
+        <p className="text-sm text-gray-500 mb-6">Track your lifting, running, or cycling session.</p>
 
         {/* Session type toggle */}
         <div className="flex mb-6 bg-gray-100 rounded-xl p-1 w-fit">
@@ -295,6 +359,17 @@ export default function WorkoutForm() {
           >
             Running
           </button>
+          <button
+            type="button"
+            onClick={() => setSessionType('cycling')}
+            className={`px-5 py-2 rounded-lg text-sm font-medium transition-colors ${
+              sessionType === 'cycling'
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Cycling
+          </button>
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-6">
@@ -302,13 +377,17 @@ export default function WorkoutForm() {
           {/* Workout name (shared) */}
           <div className="flex flex-col gap-1">
             <label className="text-sm font-medium text-gray-700">
-              {sessionType === 'running' ? 'Session name (optional)' : 'Workout name'}
+              {sessionType === 'lifting' ? 'Workout name' : 'Session name (optional)'}
             </label>
             <input
               type="text"
               value={workoutName}
               onChange={e => setWorkoutName(e.target.value)}
-              placeholder={sessionType === 'running' ? 'e.g. Morning easy run' : 'e.g. Push day'}
+              placeholder={
+                sessionType === 'running' ? 'e.g. Morning easy run' :
+                sessionType === 'cycling' ? 'e.g. Sunday endurance ride' :
+                'e.g. Push day'
+              }
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
             />
           </div>
@@ -580,6 +659,174 @@ export default function WorkoutForm() {
                 <textarea
                   value={runNotes}
                   onChange={e => setRunNotes(e.target.value)}
+                  rows={2}
+                  placeholder="How did it feel?"
+                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 resize-none"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* ---- CYCLING FORM ---- */}
+          {sessionType === 'cycling' && (
+            <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm flex flex-col gap-5">
+
+              {/* Distance + unit */}
+              <div className="flex flex-col gap-1">
+                <label className="text-sm font-medium text-gray-700">Distance</label>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={cycleDistance}
+                    onChange={e => setCycleDistance(e.target.value)}
+                    placeholder="0.00"
+                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                  />
+                  <div className="flex bg-gray-100 rounded-lg p-1">
+                    <button
+                      type="button"
+                      onClick={() => setCycleUnit('km')}
+                      className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+                        cycleUnit === 'km' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'
+                      }`}
+                    >
+                      km
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCycleUnit('mi')}
+                      className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+                        cycleUnit === 'mi' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'
+                      }`}
+                    >
+                      mi
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Ride type */}
+              <div className="flex flex-col gap-1">
+                <label className="text-sm font-medium text-gray-700">Ride type</label>
+                <div className="flex flex-wrap gap-2">
+                  {CYCLE_TYPES.map(t => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setCycleType(t)}
+                      className={`px-4 py-1.5 rounded-lg text-sm font-medium capitalize transition-colors border ${
+                        cycleType === t
+                          ? 'bg-gray-900 border-gray-900 text-white'
+                          : 'border-gray-300 text-gray-600 hover:border-gray-400'
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Power + cadence */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm font-medium text-gray-700">Avg power (W)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={cycleAvgPower}
+                    onChange={e => setCycleAvgPower(e.target.value)}
+                    placeholder="e.g. 210"
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm font-medium text-gray-700">Avg cadence (rpm)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={cycleCadence}
+                    onChange={e => setCycleCadence(e.target.value)}
+                    placeholder="e.g. 88"
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                  />
+                </div>
+              </div>
+
+              {/* Heart rate */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm font-medium text-gray-700">Avg heart rate (bpm)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={cycleAvgHR}
+                    onChange={e => setCycleAvgHR(e.target.value)}
+                    placeholder="e.g. 142"
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm font-medium text-gray-700">Max heart rate (bpm)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={cycleMaxHR}
+                    onChange={e => setCycleMaxHR(e.target.value)}
+                    placeholder="e.g. 168"
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                  />
+                </div>
+              </div>
+
+              {/* Elevation */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm font-medium text-gray-700">Elevation gain (m)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={cycleElevGain}
+                    onChange={e => setCycleElevGain(e.target.value)}
+                    placeholder="e.g. 850"
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm font-medium text-gray-700">Elevation loss (m)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={cycleElevLoss}
+                    onChange={e => setCycleElevLoss(e.target.value)}
+                    placeholder="e.g. 800"
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                  />
+                </div>
+              </div>
+
+              {/* RPE */}
+              <div className="flex flex-col gap-1">
+                <label className="text-sm font-medium text-gray-700">RPE (1–10)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  step={0.5}
+                  value={cycleRpe}
+                  onChange={e => setCycleRpe(e.target.value)}
+                  placeholder="e.g. 7"
+                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                />
+              </div>
+
+              {/* Notes */}
+              <div className="flex flex-col gap-1">
+                <label className="text-sm font-medium text-gray-700">Notes</label>
+                <textarea
+                  value={cycleNotes}
+                  onChange={e => setCycleNotes(e.target.value)}
                   rows={2}
                   placeholder="How did it feel?"
                   className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 resize-none"

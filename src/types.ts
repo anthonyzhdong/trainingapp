@@ -11,7 +11,24 @@ export interface Workout {
   name: string;
   created_at: string;
   duration: number;
-  session_type: 'lifting' | 'running';
+  session_type: 'lifting' | 'running' | 'cycling';
+}
+
+export interface CyclingSession {
+  id: string;
+  workout_id: string;
+  distance: number;
+  unit_preference: 'km' | 'mi';
+  avg_speed: number | null;       // km/h or mph matching unit_preference (derived)
+  avg_power: number | null;       // watts
+  avg_heart_rate: number | null;
+  max_heart_rate: number | null;
+  avg_cadence: number | null;     // rpm
+  elevation_gain: number | null;  // meters
+  elevation_loss: number | null;  // meters
+  ride_type: string;
+  rpe: number | null;
+  notes: string | null;
 }
 
 export interface RunningSession {

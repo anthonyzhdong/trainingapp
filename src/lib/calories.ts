@@ -72,6 +72,29 @@ export function calculateRunningKcal(
 }
 
 /**
+ * Estimates calories burned from a cycling session.
+ *
+ * If avg power and duration are available, uses the power-based formula
+ * (1 kJ ≈ 1 kcal for cycling at ~24% mechanical efficiency).
+ * Otherwise falls back to ~0.5 kcal per kg per km (cycling burns roughly
+ * half what running does per km), with an elevation bonus.
+ */
+export function calculateCyclingKcal(
+  distanceKm: number,
+  weightKg: number,
+  elevationGainM: number = 0,
+  avgPowerW?: number | null,
+  durationSeconds?: number,
+): number {
+  if (avgPowerW && durationSeconds) {
+    return Math.round(avgPowerW * durationSeconds / 1000);
+  }
+  const base = 0.5 * distanceKm * weightKg;
+  const elevationBonus = base * (elevationGainM / 100) * 0.1;
+  return Math.round(base + elevationBonus);
+}
+
+/**
  * Total Daily Energy Expenditure = BMR × lifestyle multiplier + workout bonus.
  */
 export function calculateTDEE(
