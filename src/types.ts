@@ -11,6 +11,23 @@ export interface Workout {
   name: string;
   created_at: string;
   duration: number;
+  session_type: 'lifting' | 'running';
+}
+
+export interface RunningSession {
+  id: string;
+  workout_id: string;
+  distance: number;
+  unit_preference: 'km' | 'mi';
+  avg_pace: number | null;        // seconds per unit
+  avg_heart_rate: number | null;
+  max_heart_rate: number | null;
+  avg_cadence: number | null;
+  elevation_gain: number | null;  // meters
+  elevation_loss: number | null;  // meters
+  run_type: string;
+  rpe: number | null;
+  notes: string | null;
 }
 
 export interface WorkoutSet {

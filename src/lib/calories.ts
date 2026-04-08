@@ -54,6 +54,24 @@ export function calculateWorkoutKcal(
 }
 
 /**
+ * Estimates calories burned from a running session.
+ * distanceKm: kilometres run
+ * weightKg: runner's body weight in kg
+ * elevationGainM: total ascent in metres (optional, adds ~10% per 100 m)
+ *
+ * Formula: ~1 kcal per kg per km, with an elevation bonus.
+ */
+export function calculateRunningKcal(
+  distanceKm: number,
+  weightKg: number,
+  elevationGainM: number = 0,
+): number {
+  const base = distanceKm * weightKg;
+  const elevationBonus = base * (elevationGainM / 100) * 0.1;
+  return Math.round(base + elevationBonus);
+}
+
+/**
  * Total Daily Energy Expenditure = BMR × lifestyle multiplier + workout bonus.
  */
 export function calculateTDEE(

@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client';
 import {
   calculateBMR,
   calculateWorkoutKcal,
+  calculateRunningKcal,
   calculateTDEE,
   ACTIVITY_LABELS,
   ACTIVITY_MULTIPLIERS,
@@ -38,6 +39,23 @@ interface Workout {
   created_at: string;
   duration: number;
   rpe: number | null;
+  session_type: 'lifting' | 'running';
+}
+
+interface RunningSession {
+  id: string;
+  workout_id: string;
+  distance: number;
+  unit_preference: 'km' | 'mi';
+  avg_pace: number | null;
+  avg_heart_rate: number | null;
+  max_heart_rate: number | null;
+  avg_cadence: number | null;
+  elevation_gain: number | null;
+  elevation_loss: number | null;
+  run_type: string;
+  rpe: number | null;
+  notes: string | null;
 }
 
 interface Profile {
@@ -49,18 +67,18 @@ interface Profile {
 }
 
 // Calendar constants
-const START_HOUR = 5;   // 5 am
-const END_HOUR = 23;    // 11 pm
-const HOUR_PX = 60;     // px per hour (= 1 px per minute)
+const START_HOUR = 5;
+const END_HOUR = 23;
+const HOUR_PX = 60;
 const GRID_HEIGHT = (END_HOUR - START_HOUR) * HOUR_PX;
-const TIME_COL = 52;    // px width of time label column
+const TIME_COL = 52;
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 // --- helpers ---
 
 function getWeekMonday(offset: number): Date {
   const now = new Date();
-  const dow = now.getDay(); // 0=Sun
+  const dow = now.getDay();
   const toMonday = dow === 0 ? -6 : 1 - dow;
   const d = new Date(now);
   d.setDate(now.getDate() + toMonday + offset * 7);
@@ -97,11 +115,27 @@ function formatDuration(seconds: number) {
   return `${m} min`;
 }
 
+function formatPace(secondsPerUnit: number, unit: 'km' | 'mi'): string {
+  const mins = Math.floor(secondsPerUnit / 60);
+  const secs = Math.round(secondsPerUnit % 60);
+  return `${mins}:${String(secs).padStart(2, '0')} /${unit}`;
+}
+
+function formatDistance(distance: number, unit: 'km' | 'mi'): string {
+  return `${distance % 1 === 0 ? distance : distance.toFixed(2)} ${unit}`;
+}
+
+// Convert stored distance to km for calorie calculation
+function toKm(distance: number, unit: 'km' | 'mi'): number {
+  return unit === 'mi' ? distance * 1.60934 : distance;
+}
+
 // --- component ---
 
 export default function HistoryPage() {
   const pathname = usePathname();
   const [workouts, setWorkouts] = useState<Workout[]>([]);
+  const [runningSessions, setRunningSessions] = useState<Record<string, RunningSession>>({});
   const [loading, setLoading] = useState(true);
   const [weekOffset, setWeekOffset] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -114,10 +148,11 @@ export default function HistoryPage() {
     const supabase = createClient();
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) return;
+
       const [{ data: workoutData }, { data: profileData }] = await Promise.all([
         supabase
           .from('workouts')
-          .select('id, name, created_at, duration, rpe')
+          .select('id, name, created_at, duration, rpe, session_type')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false }),
         supabase
@@ -126,8 +161,29 @@ export default function HistoryPage() {
           .eq('user_id', user.id)
           .maybeSingle(),
       ]);
-      setWorkouts(workoutData ?? []);
+
+      const allWorkouts: Workout[] = workoutData ?? [];
+      setWorkouts(allWorkouts);
       setProfile(profileData ?? null);
+
+      // Fetch running sessions for all running workouts
+      const runningIds = allWorkouts
+        .filter(w => w.session_type === 'running')
+        .map(w => w.id);
+
+      if (runningIds.length > 0) {
+        const { data: runData } = await supabase
+          .from('running_sessions')
+          .select('*')
+          .in('workout_id', runningIds);
+
+        const map: Record<string, RunningSession> = {};
+        for (const r of runData ?? []) {
+          map[r.workout_id] = r as RunningSession;
+        }
+        setRunningSessions(map);
+      }
+
       setLoading(false);
     });
   }, []);
@@ -135,6 +191,10 @@ export default function HistoryPage() {
   async function selectWorkout(id: string) {
     if (selectedId === id) { setSelectedId(null); return; }
     setSelectedId(id);
+
+    const workout = workouts.find(w => w.id === id);
+    // Running details are already loaded; only lazy-fetch for lifting
+    if (!workout || workout.session_type === 'running') return;
     if (details[id]) return;
 
     setDetailLoading(true);
@@ -153,12 +213,11 @@ export default function HistoryPage() {
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
   const weekEnd = addDays(monday, 7);
 
-  // Group workouts for the visible week by day index (0=Mon … 6=Sun)
   const byDay: Record<number, Workout[]> = {};
   for (const w of workouts) {
     const d = new Date(w.created_at);
     if (d < monday || d >= weekEnd) continue;
-    const dow = d.getDay(); // 0=Sun
+    const dow = d.getDay();
     const idx = dow === 0 ? 6 : dow - 1;
     byDay[idx] = [...(byDay[idx] ?? []), w];
   }
@@ -166,8 +225,29 @@ export default function HistoryPage() {
   const todayStr = new Date().toDateString();
   const selectedWorkout = selectedId ? workouts.find(w => w.id === selectedId) ?? null : null;
   const selectedExercises = selectedId ? details[selectedId] : undefined;
+  const selectedRunning = selectedId ? runningSessions[selectedId] : undefined;
 
   const hours = Array.from({ length: END_HOUR - START_HOUR }, (_, i) => START_HOUR + i);
+
+  // Calorie calculation that handles mixed session types
+  function calcDayKcal(dayWorkouts: Workout[], profileWeight: number | null): number {
+    let total = 0;
+    for (const w of dayWorkouts) {
+      if (w.session_type === 'running') {
+        const rs = runningSessions[w.id];
+        if (rs && profileWeight) {
+          const km = toKm(rs.distance, rs.unit_preference);
+          total += calculateRunningKcal(km, profileWeight, rs.elevation_gain ?? 0);
+        } else if (w.rpe != null) {
+          // Fallback to RPE-based if running session data not loaded yet
+          total += calculateWorkoutKcal([{ duration: w.duration, rpe: w.rpe }]);
+        }
+      } else {
+        total += calculateWorkoutKcal([{ duration: w.duration, rpe: w.rpe }]);
+      }
+    }
+    return total;
+  }
 
   return (
     <div className="min-h-screen flex">
@@ -225,12 +305,7 @@ export default function HistoryPage() {
         {(() => {
           const p = profile;
           const profileComplete =
-            p &&
-            p.weight != null &&
-            p.height != null &&
-            p.age != null &&
-            p.sex &&
-            p.activity_level;
+            p && p.weight != null && p.height != null && p.age != null && p.sex && p.activity_level;
 
           if (!profileComplete) {
             return (
@@ -255,12 +330,12 @@ export default function HistoryPage() {
 
           if (selectedDayIdx !== null) {
             const dayWorkouts = byDay[selectedDayIdx] ?? [];
-            workoutKcal = calculateWorkoutKcal(dayWorkouts);
+            workoutKcal = calcDayKcal(dayWorkouts, p.weight);
             workoutLabel = `+${workoutKcal} kcal`;
             cardTitle = `${DAY_LABELS[selectedDayIdx]} — Calorie Estimate`;
           } else {
             const allWeekWorkouts = Object.values(byDay).flat();
-            workoutKcal = Math.round(calculateWorkoutKcal(allWeekWorkouts) / 7);
+            workoutKcal = Math.round(calcDayKcal(allWeekWorkouts, p.weight) / 7);
             workoutLabel = `+${workoutKcal} kcal/day avg`;
             cardTitle = 'Weekly Average — Daily Calorie Estimate';
           }
@@ -294,7 +369,7 @@ export default function HistoryPage() {
                   <>
                     <span className="text-gray-300 text-sm">+</span>
                     <div>
-                      <p className="text-xs text-gray-400 mb-0.5">{selectedDayIdx !== null ? 'Workout' : 'Workouts this week'}</p>
+                      <p className="text-xs text-gray-400 mb-0.5">{selectedDayIdx !== null ? 'Session' : 'Sessions this week'}</p>
                       <p className="text-sm font-semibold text-gray-900">{workoutLabel}</p>
                     </div>
                   </>
@@ -371,7 +446,6 @@ export default function HistoryPage() {
                   className={`flex-1 border-l border-gray-100 relative ${isToday ? 'bg-blue-50/30' : ''}`}
                   style={{ height: GRID_HEIGHT, minWidth: 0 }}
                 >
-                  {/* Hour lines */}
                   {hours.map(h => (
                     <div
                       key={h}
@@ -379,8 +453,6 @@ export default function HistoryPage() {
                       style={{ top: (h - START_HOUR) * HOUR_PX }}
                     />
                   ))}
-
-                  {/* Half-hour lines */}
                   {hours.map(h => (
                     <div
                       key={`${h}h`}
@@ -389,29 +461,28 @@ export default function HistoryPage() {
                     />
                   ))}
 
-                  {/* Workout cards */}
                   {dayWorkouts.map((w, wi) => {
                     const isSelected = selectedId === w.id;
-                    const offset = wi * 3; // slight stagger if multiple workouts same day
+                    const isRunning = w.session_type === 'running';
+                    const offset = wi * 3;
+                    const rs = isRunning ? runningSessions[w.id] : null;
+
+                    const baseColor = isRunning
+                      ? isSelected ? 'bg-gray-900 border-gray-900' : 'bg-emerald-500 border-emerald-500 hover:bg-emerald-600 hover:border-emerald-600'
+                      : isSelected ? 'bg-gray-900 border-gray-900' : 'bg-indigo-500 border-indigo-500 hover:bg-indigo-600 hover:border-indigo-600';
+
                     return (
                       <button
                         key={w.id}
                         onClick={() => selectWorkout(w.id)}
-                        style={{
-                          top: topPx(w.created_at) + offset,
-                          left: 4,
-                          right: 4,
-                          minHeight: 44,
-                        }}
-                        className={`absolute rounded-xl px-2.5 py-2 text-left text-xs shadow-sm transition-all border ${
-                          isSelected
-                            ? 'bg-gray-900 border-gray-900 text-white'
-                            : 'bg-indigo-500 border-indigo-500 text-white hover:bg-indigo-600 hover:border-indigo-600'
-                        }`}
+                        style={{ top: topPx(w.created_at) + offset, left: 4, right: 4, minHeight: 44 }}
+                        className={`absolute rounded-xl px-2.5 py-2 text-left text-xs shadow-sm transition-all border text-white ${baseColor}`}
                       >
                         <p className="font-semibold leading-tight truncate">{w.name}</p>
                         <p className="opacity-75 mt-0.5">{timeLabel(w.created_at)}</p>
-                        {w.duration ? (
+                        {rs ? (
+                          <p className="opacity-75">{formatDistance(rs.distance, rs.unit_preference)}</p>
+                        ) : w.duration ? (
                           <p className="opacity-75">{formatDuration(w.duration)}</p>
                         ) : null}
                       </button>
@@ -424,14 +495,12 @@ export default function HistoryPage() {
         </div>
 
         {/* Loading / empty state */}
-        {loading && (
-          <p className="text-sm text-gray-400 mt-4">Loading workouts…</p>
-        )}
+        {loading && <p className="text-sm text-gray-400 mt-4">Loading sessions…</p>}
         {!loading && workouts.length === 0 && (
-          <p className="text-sm text-gray-400 mt-4">No workouts logged yet.</p>
+          <p className="text-sm text-gray-400 mt-4">No sessions logged yet.</p>
         )}
         {!loading && workouts.length > 0 && Object.keys(byDay).length === 0 && (
-          <p className="text-sm text-gray-400 mt-4">No workouts this week.</p>
+          <p className="text-sm text-gray-400 mt-4">No sessions this week.</p>
         )}
 
         {/* Detail panel */}
@@ -439,7 +508,16 @@ export default function HistoryPage() {
           <div className="mt-5 bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
             <div className="px-5 py-4 flex items-center justify-between border-b border-gray-100">
               <div>
-                <p className="text-sm font-semibold text-gray-900">{selectedWorkout.name}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-semibold text-gray-900">{selectedWorkout.name}</p>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${
+                    selectedWorkout.session_type === 'running'
+                      ? 'bg-emerald-100 text-emerald-700'
+                      : 'bg-indigo-100 text-indigo-700'
+                  }`}>
+                    {selectedWorkout.session_type}
+                  </span>
+                </div>
                 <p className="text-xs text-gray-400 mt-0.5 flex gap-3">
                   <span>{timeLabel(selectedWorkout.created_at)}</span>
                   {selectedWorkout.duration ? <span>{formatDuration(selectedWorkout.duration)}</span> : null}
@@ -455,44 +533,109 @@ export default function HistoryPage() {
             </div>
 
             <div className="px-5 py-4">
-              {detailLoading && <p className="text-sm text-gray-400">Loading…</p>}
-              {!detailLoading && selectedExercises?.length === 0 && (
-                <p className="text-sm text-gray-400">No exercises recorded.</p>
-              )}
-              <div className="flex flex-col gap-5">
-                {!detailLoading && selectedExercises?.map((ex, i) => (
-                  <div key={ex.id}>
-                    <p className="text-sm font-semibold text-gray-800 mb-2">
-                      {i + 1}. {ex.exercises.name}
-                    </p>
-                    <div className="flex flex-col gap-1">
-                      <div className="grid grid-cols-[2rem_1fr_1fr] gap-2 px-1 mb-1">
-                        <span className="text-xs text-gray-400 text-center">Set</span>
-                        <span className="text-xs text-gray-400 text-center">Reps</span>
-                        <span className="text-xs text-gray-400 text-center">Weight (kg)</span>
-                      </div>
-                      {ex.workout_sets
-                        .slice()
-                        .sort((a, b) => a.set_number - b.set_number)
-                        .map(s => (
-                          <div
-                            key={s.set_number}
-                            className="grid grid-cols-[2rem_1fr_1fr] gap-2 items-center bg-gray-50 rounded-lg px-2 py-1.5"
-                          >
-                            <span className="text-sm text-gray-500 text-center">{s.set_number}</span>
-                            <span className="text-sm text-gray-900 text-center">{s.reps}</span>
-                            <span className="text-sm text-gray-900 text-center">{s.weight}</span>
-                          </div>
-                        ))}
-                      {ex.workout_sets.some(s => s.notes) && (
-                        <p className="text-xs text-gray-400 mt-1 px-1">
-                          {ex.workout_sets.find(s => s.notes)?.notes}
-                        </p>
-                      )}
+              {/* Running detail */}
+              {selectedWorkout.session_type === 'running' && selectedRunning && (
+                <div className="flex flex-col gap-4">
+                  {/* Stats grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <div className="bg-gray-50 rounded-xl px-4 py-3">
+                      <p className="text-xs text-gray-400 mb-0.5">Distance</p>
+                      <p className="text-sm font-semibold text-gray-900">
+                        {formatDistance(selectedRunning.distance, selectedRunning.unit_preference)}
+                      </p>
                     </div>
+                    {selectedRunning.avg_pace && (
+                      <div className="bg-gray-50 rounded-xl px-4 py-3">
+                        <p className="text-xs text-gray-400 mb-0.5">Avg pace</p>
+                        <p className="text-sm font-semibold text-gray-900">
+                          {formatPace(selectedRunning.avg_pace, selectedRunning.unit_preference)}
+                        </p>
+                      </div>
+                    )}
+                    <div className="bg-gray-50 rounded-xl px-4 py-3">
+                      <p className="text-xs text-gray-400 mb-0.5">Type</p>
+                      <p className="text-sm font-semibold text-gray-900 capitalize">{selectedRunning.run_type}</p>
+                    </div>
+                    {selectedRunning.avg_heart_rate && (
+                      <div className="bg-gray-50 rounded-xl px-4 py-3">
+                        <p className="text-xs text-gray-400 mb-0.5">Avg HR</p>
+                        <p className="text-sm font-semibold text-gray-900">{selectedRunning.avg_heart_rate} bpm</p>
+                      </div>
+                    )}
+                    {selectedRunning.max_heart_rate && (
+                      <div className="bg-gray-50 rounded-xl px-4 py-3">
+                        <p className="text-xs text-gray-400 mb-0.5">Max HR</p>
+                        <p className="text-sm font-semibold text-gray-900">{selectedRunning.max_heart_rate} bpm</p>
+                      </div>
+                    )}
+                    {selectedRunning.avg_cadence && (
+                      <div className="bg-gray-50 rounded-xl px-4 py-3">
+                        <p className="text-xs text-gray-400 mb-0.5">Cadence</p>
+                        <p className="text-sm font-semibold text-gray-900">{selectedRunning.avg_cadence} spm</p>
+                      </div>
+                    )}
+                    {selectedRunning.elevation_gain != null && (
+                      <div className="bg-gray-50 rounded-xl px-4 py-3">
+                        <p className="text-xs text-gray-400 mb-0.5">Elev gain</p>
+                        <p className="text-sm font-semibold text-gray-900">{selectedRunning.elevation_gain} m</p>
+                      </div>
+                    )}
+                    {selectedRunning.elevation_loss != null && (
+                      <div className="bg-gray-50 rounded-xl px-4 py-3">
+                        <p className="text-xs text-gray-400 mb-0.5">Elev loss</p>
+                        <p className="text-sm font-semibold text-gray-900">{selectedRunning.elevation_loss} m</p>
+                      </div>
+                    )}
                   </div>
-                ))}
-              </div>
+                  {selectedRunning.notes && (
+                    <p className="text-sm text-gray-600 italic">{selectedRunning.notes}</p>
+                  )}
+                </div>
+              )}
+
+              {/* Lifting detail */}
+              {selectedWorkout.session_type === 'lifting' && (
+                <>
+                  {detailLoading && <p className="text-sm text-gray-400">Loading…</p>}
+                  {!detailLoading && selectedExercises?.length === 0 && (
+                    <p className="text-sm text-gray-400">No exercises recorded.</p>
+                  )}
+                  <div className="flex flex-col gap-5">
+                    {!detailLoading && selectedExercises?.map((ex, i) => (
+                      <div key={ex.id}>
+                        <p className="text-sm font-semibold text-gray-800 mb-2">
+                          {i + 1}. {ex.exercises.name}
+                        </p>
+                        <div className="flex flex-col gap-1">
+                          <div className="grid grid-cols-[2rem_1fr_1fr] gap-2 px-1 mb-1">
+                            <span className="text-xs text-gray-400 text-center">Set</span>
+                            <span className="text-xs text-gray-400 text-center">Reps</span>
+                            <span className="text-xs text-gray-400 text-center">Weight (kg)</span>
+                          </div>
+                          {ex.workout_sets
+                            .slice()
+                            .sort((a, b) => a.set_number - b.set_number)
+                            .map(s => (
+                              <div
+                                key={s.set_number}
+                                className="grid grid-cols-[2rem_1fr_1fr] gap-2 items-center bg-gray-50 rounded-lg px-2 py-1.5"
+                              >
+                                <span className="text-sm text-gray-500 text-center">{s.set_number}</span>
+                                <span className="text-sm text-gray-900 text-center">{s.reps}</span>
+                                <span className="text-sm text-gray-900 text-center">{s.weight}</span>
+                              </div>
+                            ))}
+                          {ex.workout_sets.some(s => s.notes) && (
+                            <p className="text-xs text-gray-400 mt-1 px-1">
+                              {ex.workout_sets.find(s => s.notes)?.notes}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}
