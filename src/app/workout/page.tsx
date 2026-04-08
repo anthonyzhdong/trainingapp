@@ -159,25 +159,23 @@ export default function WorkoutForm() {
         }
 
         const distanceNum = parseFloat(cycleDistance);
-        const avgSpeed = durationSeconds > 0 && distanceNum > 0
-          ? parseFloat((distanceNum / (durationSeconds / 3600)).toFixed(1))
+        const distanceKm = cycleUnit === 'mi' ? distanceNum * 1.60934 : distanceNum;
+        const avgSpeed = durationSeconds > 0 && distanceKm > 0
+          ? parseFloat((distanceKm / (durationSeconds / 3600)).toFixed(1))
           : null;
 
         const { error: cycleError } = await supabase
           .from('cycling_sessions')
           .insert({
             workout_id: workout.id,
-            distance: distanceNum,
-            unit_preference: cycleUnit,
+            distance: distanceKm,
             avg_speed: avgSpeed,
             avg_power: cycleAvgPower ? parseInt(cycleAvgPower) : null,
             avg_heart_rate: cycleAvgHR ? parseInt(cycleAvgHR) : null,
             max_heart_rate: cycleMaxHR ? parseInt(cycleMaxHR) : null,
             avg_cadence: cycleCadence ? parseInt(cycleCadence) : null,
             elevation_gain: cycleElevGain ? parseFloat(cycleElevGain) : null,
-            elevation_loss: cycleElevLoss ? parseFloat(cycleElevLoss) : null,
             ride_type: cycleType,
-            rpe: cycleRpe ? parseFloat(cycleRpe) : null,
             notes: cycleNotes || null,
           });
 
@@ -209,24 +207,21 @@ export default function WorkoutForm() {
         }
 
         const distanceNum = parseFloat(runDistance);
-        const avgPace = durationSeconds > 0 && distanceNum > 0
-          ? Math.round(durationSeconds / distanceNum)
+        const distanceKm = runUnit === 'mi' ? distanceNum * 1.60934 : distanceNum;
+        const avgPace = durationSeconds > 0 && distanceKm > 0
+          ? Math.round(durationSeconds / distanceKm)
           : null;
 
         const { error: runError } = await supabase
           .from('running_sessions')
           .insert({
             workout_id: workout.id,
-            distance: distanceNum,
-            unit_preference: runUnit,
+            distance: distanceKm,
             avg_pace: avgPace,
             avg_heart_rate: runAvgHR ? parseInt(runAvgHR) : null,
             max_heart_rate: runMaxHR ? parseInt(runMaxHR) : null,
-            avg_cadence: runCadence ? parseInt(runCadence) : null,
             elevation_gain: runElevGain ? parseFloat(runElevGain) : null,
-            elevation_loss: runElevLoss ? parseFloat(runElevLoss) : null,
             run_type: runType,
-            rpe: runRpe ? parseFloat(runRpe) : null,
             notes: runNotes || null,
           });
 

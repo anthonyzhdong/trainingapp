@@ -1,15 +1,15 @@
 create extension if not exists "uuid-ossp";
 
 create table profile (
-    id uuid primary key default uuid_generate_v4(),
-    user_id uuid not null references auth.users(id) on delete cascade,
+    user_id uuid primary key references auth.users(id) on delete cascade,
     first_name text,
     age integer,
     height numeric,
-    sex text,
+    sex text check (sex in ('male', 'female')),
     weight numeric,
     activity_level text,
-    created_at timestamptz default now()
+    unit_preference text default 'metric' check (unit_preference in ('metric', 'imperial')),
+    created_at timestamptz default now(),
     updated_at timestamptz default now()
 )
 
@@ -21,17 +21,14 @@ create table exercises (
 create table cycling_sessions (
     id uuid primary key default uuid_generate_v4(),
     workout_id uuid not null references workouts(id) on delete cascade,
-    distance numeric not null,           -- stored in user's chosen unit
-    unit_preference text default 'km',   -- 'km' or 'mi'
-    avg_speed numeric,                   -- km/h or mph matching unit_preference (derived)
+    distance numeric not null,           -- stored in km
+    avg_speed numeric,                   -- km/h (derived)
     avg_power integer,                   -- watts (from power meter)
     avg_heart_rate integer,              -- bpm
     max_heart_rate integer,              -- bpm
     avg_cadence integer,                 -- rpm (rotations per minute)
     elevation_gain numeric,              -- meters
-    elevation_loss numeric,              -- meters
     ride_type text not null,             -- 'easy' | 'endurance' | 'tempo' | 'interval' | 'climb' | 'race'
-    rpe numeric check (rpe between 1 and 10),
     notes text
 );
 
@@ -41,7 +38,7 @@ create table workouts (
     name text not null,
     duration integer not null,
     rpe numeric,
-    session_type text not null default 'lifting',  -- 'lifting' | 'running' 
+    session_type text not null,  -- 'lifting' | 'running' | 'cycling'
     created_at timestamptz default now()
 );
 
@@ -49,7 +46,8 @@ create table workout_exercises (
     id uuid primary key default uuid_generate_v4(),
     workout_id uuid not null references workouts(id) on delete cascade,
     exercise_id uuid not null references exercises(id) on delete cascade,
-    exercise_order integer not null
+    exercise_order integer not null,
+    notes text
 );
 
 
@@ -59,9 +57,7 @@ create table workout_sets(
     set_number integer not null,
     weight numeric not null,
     reps integer not null,
-    notes text,
     created_at timestamptz default now()
-
 );
 
 CREATE TABLE planned_sessions (
@@ -83,16 +79,12 @@ CREATE TABLE planned_sessions (
 create table running_sessions (
     id uuid primary key default uuid_generate_v4(),
     workout_id uuid not null references workouts(id) on delete cascade,
-    distance numeric not null,           -- stored in user's chosen unit
-    unit_preference text default 'km',   -- 'km' or 'mi'
-    avg_pace integer,                    -- seconds per unit (derived from distance + duration)
+    distance numeric not null,           -- stored in km
+    avg_pace integer,                    -- seconds per km (derived from distance + duration)
     avg_heart_rate integer,              -- bpm
     max_heart_rate integer,              -- bpm
-    avg_cadence integer,                 -- steps per minute
     elevation_gain numeric,              -- meters
-    elevation_loss numeric,              -- meters
     run_type text not null,              -- 'easy' | 'tempo' | 'interval' | 'long' | 'race'
-    rpe numeric check (rpe between 1 and 10),
     notes text
 );
 

@@ -17,33 +17,26 @@ export interface Workout {
 export interface CyclingSession {
   id: string;
   workout_id: string;
-  distance: number;
-  unit_preference: 'km' | 'mi';
-  avg_speed: number | null;       // km/h or mph matching unit_preference (derived)
+  distance: number;               // stored in km
+  avg_speed: number | null;       // km/h (derived)
   avg_power: number | null;       // watts
   avg_heart_rate: number | null;
   max_heart_rate: number | null;
   avg_cadence: number | null;     // rpm
   elevation_gain: number | null;  // meters
-  elevation_loss: number | null;  // meters
   ride_type: string;
-  rpe: number | null;
   notes: string | null;
 }
 
 export interface RunningSession {
   id: string;
   workout_id: string;
-  distance: number;
-  unit_preference: 'km' | 'mi';
-  avg_pace: number | null;        // seconds per unit
+  distance: number;               // stored in km
+  avg_pace: number | null;        // seconds per km
   avg_heart_rate: number | null;
   max_heart_rate: number | null;
-  avg_cadence: number | null;
   elevation_gain: number | null;  // meters
-  elevation_loss: number | null;  // meters
   run_type: string;
-  rpe: number | null;
   notes: string | null;
 }
 
@@ -55,7 +48,6 @@ export interface WorkoutSet {
   weight: number;
   reps: number;
   created_at: string;
-  notes: string;
 }
 
 export interface DailyLog {

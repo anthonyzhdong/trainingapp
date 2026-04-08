@@ -20,13 +20,13 @@ interface SetRow {
   set_number: number;
   weight: number;
   reps: number;
-  notes: string | null;
 }
 
 interface ExerciseRow {
   id: string;
   exercise_order: number;
   exercises: { id: string; name: string };
+  notes: string | null;
   workout_sets: SetRow[];
 }
 
@@ -42,33 +42,26 @@ interface Workout {
 interface CyclingSession {
   id: string;
   workout_id: string;
-  distance: number;
-  unit_preference: 'km' | 'mi';
-  avg_speed: number | null;
+  distance: number;               // stored in km
+  avg_speed: number | null;       // km/h (derived)
   avg_power: number | null;
   avg_heart_rate: number | null;
   max_heart_rate: number | null;
   avg_cadence: number | null;
   elevation_gain: number | null;
-  elevation_loss: number | null;
   ride_type: string;
-  rpe: number | null;
   notes: string | null;
 }
 
 interface RunningSession {
   id: string;
   workout_id: string;
-  distance: number;
-  unit_preference: 'km' | 'mi';
-  avg_pace: number | null;
+  distance: number;               // stored in km
+  avg_pace: number | null;        // seconds per km
   avg_heart_rate: number | null;
   max_heart_rate: number | null;
-  avg_cadence: number | null;
   elevation_gain: number | null;
-  elevation_loss: number | null;
   run_type: string;
-  rpe: number | null;
   notes: string | null;
 }
 
@@ -78,6 +71,7 @@ interface Profile {
   age: number | null;
   sex: string | null;
   activity_level: string | null;
+  unit_preference: 'metric' | 'imperial' | null;
 }
 
 // Calendar constants
@@ -139,9 +133,12 @@ function formatDistance(distance: number, unit: 'km' | 'mi'): string {
   return `${distance % 1 === 0 ? distance : distance.toFixed(2)} ${unit}`;
 }
 
-// Convert stored distance to km for calorie calculation
-function toKm(distance: number, unit: 'km' | 'mi'): number {
-  return unit === 'mi' ? distance * 1.60934 : distance;
+function toDisplayUnit(distanceKm: number, unit: 'km' | 'mi'): number {
+  return unit === 'mi' ? distanceKm * 0.621371 : distanceKm;
+}
+
+function displayUnit(unitPref: 'metric' | 'imperial' | null): 'km' | 'mi' {
+  return unitPref === 'imperial' ? 'mi' : 'km';
 }
 
 // --- component ---
@@ -172,7 +169,7 @@ export default function HistoryPage() {
           .order('created_at', { ascending: false }),
         supabase
           .from('profile')
-          .select('weight, height, age, sex, activity_level')
+          .select('weight, height, age, sex, activity_level, unit_preference')
           .eq('user_id', user.id)
           .maybeSingle(),
       ]);
@@ -218,7 +215,7 @@ export default function HistoryPage() {
     const supabase = createClient();
     const { data } = await supabase
       .from('workout_exercises')
-      .select(`id, exercise_order, exercises (id, name), workout_sets (set_number, weight, reps, notes)`)
+      .select(`id, exercise_order, notes, exercises (id, name), workout_sets (set_number, weight, reps)`)
       .eq('workout_id', id)
       .order('exercise_order');
 
@@ -254,14 +251,14 @@ export default function HistoryPage() {
       if (w.session_type === 'running') {
         const rs = runningSessions[w.id];
         if (rs && profileWeight) {
-          total += calculateRunningKcal(toKm(rs.distance, rs.unit_preference), profileWeight, rs.elevation_gain ?? 0);
+          total += calculateRunningKcal(rs.distance, profileWeight, rs.elevation_gain ?? 0);
         } else {
           total += calculateWorkoutKcal([{ duration: w.duration, rpe: w.rpe }]);
         }
       } else if (w.session_type === 'cycling') {
         const cs = cyclingSessions[w.id];
         if (cs && profileWeight) {
-          total += calculateCyclingKcal(toKm(cs.distance, cs.unit_preference), profileWeight, cs.elevation_gain ?? 0, cs.avg_power, w.duration);
+          total += calculateCyclingKcal(cs.distance, profileWeight, cs.elevation_gain ?? 0, cs.avg_power, w.duration);
         } else {
           total += calculateWorkoutKcal([{ duration: w.duration, rpe: w.rpe }]);
         }
@@ -482,10 +479,11 @@ export default function HistoryPage() {
                           ? 'bg-amber-500 border-amber-500 hover:bg-amber-600 hover:border-amber-600'
                           : 'bg-indigo-500 border-indigo-500 hover:bg-indigo-600 hover:border-indigo-600';
 
+                    const unit = displayUnit(profile?.unit_preference ?? null);
                     const distLabel = rs
-                      ? formatDistance(rs.distance, rs.unit_preference)
+                      ? formatDistance(toDisplayUnit(rs.distance, unit), unit)
                       : cs
-                        ? formatDistance(cs.distance, cs.unit_preference)
+                        ? formatDistance(toDisplayUnit(cs.distance, unit), unit)
                         : null;
 
                     return (
@@ -551,21 +549,22 @@ export default function HistoryPage() {
 
             <div className="px-5 py-4">
               {/* Running detail */}
-              {selectedWorkout.session_type === 'running' && selectedRunning && (
+              {selectedWorkout.session_type === 'running' && selectedRunning && (() => {
+                const unit = displayUnit(profile?.unit_preference ?? null);
+                return (
                 <div className="flex flex-col gap-4">
-                  {/* Stats grid */}
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                     <div className="bg-gray-50 rounded-xl px-4 py-3">
                       <p className="text-xs text-gray-400 mb-0.5">Distance</p>
                       <p className="text-sm font-semibold text-gray-900">
-                        {formatDistance(selectedRunning.distance, selectedRunning.unit_preference)}
+                        {formatDistance(toDisplayUnit(selectedRunning.distance, unit), unit)}
                       </p>
                     </div>
                     {selectedRunning.avg_pace && (
                       <div className="bg-gray-50 rounded-xl px-4 py-3">
                         <p className="text-xs text-gray-400 mb-0.5">Avg pace</p>
                         <p className="text-sm font-semibold text-gray-900">
-                          {formatPace(selectedRunning.avg_pace, selectedRunning.unit_preference)}
+                          {formatPace(selectedRunning.avg_pace, unit)}
                         </p>
                       </div>
                     )}
@@ -585,22 +584,10 @@ export default function HistoryPage() {
                         <p className="text-sm font-semibold text-gray-900">{selectedRunning.max_heart_rate} bpm</p>
                       </div>
                     )}
-                    {selectedRunning.avg_cadence && (
-                      <div className="bg-gray-50 rounded-xl px-4 py-3">
-                        <p className="text-xs text-gray-400 mb-0.5">Cadence</p>
-                        <p className="text-sm font-semibold text-gray-900">{selectedRunning.avg_cadence} spm</p>
-                      </div>
-                    )}
                     {selectedRunning.elevation_gain != null && (
                       <div className="bg-gray-50 rounded-xl px-4 py-3">
                         <p className="text-xs text-gray-400 mb-0.5">Elev gain</p>
                         <p className="text-sm font-semibold text-gray-900">{selectedRunning.elevation_gain} m</p>
-                      </div>
-                    )}
-                    {selectedRunning.elevation_loss != null && (
-                      <div className="bg-gray-50 rounded-xl px-4 py-3">
-                        <p className="text-xs text-gray-400 mb-0.5">Elev loss</p>
-                        <p className="text-sm font-semibold text-gray-900">{selectedRunning.elevation_loss} m</p>
                       </div>
                     )}
                   </div>
@@ -608,23 +595,26 @@ export default function HistoryPage() {
                     <p className="text-sm text-gray-600 italic">{selectedRunning.notes}</p>
                   )}
                 </div>
-              )}
+                );
+              })()}
 
               {/* Cycling detail */}
-              {selectedWorkout.session_type === 'cycling' && selectedCycling && (
+              {selectedWorkout.session_type === 'cycling' && selectedCycling && (() => {
+                const unit = displayUnit(profile?.unit_preference ?? null);
+                return (
                 <div className="flex flex-col gap-4">
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                     <div className="bg-gray-50 rounded-xl px-4 py-3">
                       <p className="text-xs text-gray-400 mb-0.5">Distance</p>
                       <p className="text-sm font-semibold text-gray-900">
-                        {formatDistance(selectedCycling.distance, selectedCycling.unit_preference)}
+                        {formatDistance(toDisplayUnit(selectedCycling.distance, unit), unit)}
                       </p>
                     </div>
                     {selectedCycling.avg_speed && (
                       <div className="bg-gray-50 rounded-xl px-4 py-3">
                         <p className="text-xs text-gray-400 mb-0.5">Avg speed</p>
                         <p className="text-sm font-semibold text-gray-900">
-                          {selectedCycling.avg_speed} {selectedCycling.unit_preference}/h
+                          {toDisplayUnit(selectedCycling.avg_speed, unit).toFixed(1)} {unit}/h
                         </p>
                       </div>
                     )}
@@ -662,18 +652,13 @@ export default function HistoryPage() {
                         <p className="text-sm font-semibold text-gray-900">{selectedCycling.elevation_gain} m</p>
                       </div>
                     )}
-                    {selectedCycling.elevation_loss != null && (
-                      <div className="bg-gray-50 rounded-xl px-4 py-3">
-                        <p className="text-xs text-gray-400 mb-0.5">Elev loss</p>
-                        <p className="text-sm font-semibold text-gray-900">{selectedCycling.elevation_loss} m</p>
-                      </div>
-                    )}
                   </div>
                   {selectedCycling.notes && (
                     <p className="text-sm text-gray-600 italic">{selectedCycling.notes}</p>
                   )}
                 </div>
-              )}
+                );
+              })()}
 
               {/* Lifting detail */}
               {selectedWorkout.session_type === 'lifting' && (
@@ -707,10 +692,8 @@ export default function HistoryPage() {
                                 <span className="text-sm text-gray-900 text-center">{s.weight}</span>
                               </div>
                             ))}
-                          {ex.workout_sets.some(s => s.notes) && (
-                            <p className="text-xs text-gray-400 mt-1 px-1">
-                              {ex.workout_sets.find(s => s.notes)?.notes}
-                            </p>
+                          {ex.notes && (
+                            <p className="text-xs text-gray-400 mt-1 px-1">{ex.notes}</p>
                           )}
                         </div>
                       </div>
