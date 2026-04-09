@@ -92,9 +92,9 @@ create table daily_logs (
     id uuid primary key default uuid_generate_v4(),
     user_id uuid not null references auth.users(id) on delete cascade,
     log_date date not null,
+    sleep integer,
     weight numeric,
-    steps integer,
-    calories integer,
-    sleep_hours numeric
+    soreness integer check (soreness between 1 and 5),
+    motivation integer check (motivation between 1 and 5),
 
 );
