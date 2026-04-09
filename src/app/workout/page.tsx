@@ -28,6 +28,7 @@ export default function WorkoutForm() {
   const [duration, setDuration] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [sessionRPE, setSessionRPE] = useState('');
 
   // --- lifting state ---
   const [rpe, setRpe] = useState('');
@@ -41,9 +42,7 @@ export default function WorkoutForm() {
   const [runType, setRunType] = useState<string>('easy');
   const [runAvgHR, setRunAvgHR] = useState('');
   const [runMaxHR, setRunMaxHR] = useState('');
-  const [runCadence, setRunCadence] = useState('');
   const [runElevGain, setRunElevGain] = useState('');
-  const [runElevLoss, setRunElevLoss] = useState('');
   const [runRpe, setRunRpe] = useState('');
   const [runNotes, setRunNotes] = useState('');
 
@@ -56,7 +55,6 @@ export default function WorkoutForm() {
   const [cycleMaxHR, setCycleMaxHR] = useState('');
   const [cycleCadence, setCycleCadence] = useState('');
   const [cycleElevGain, setCycleElevGain] = useState('');
-  const [cycleElevLoss, setCycleElevLoss] = useState('');
   const [cycleRpe, setCycleRpe] = useState('');
   const [cycleNotes, setCycleNotes] = useState('');
 
@@ -197,6 +195,7 @@ export default function WorkoutForm() {
             duration: durationSeconds,
             rpe: runRpe ? parseFloat(runRpe) : null,
             session_type: 'running',
+            created_at: new Date(workoutDate).toISOString()
           })
           .select('id')
           .single();
@@ -592,17 +591,7 @@ export default function WorkoutForm() {
 
               {/* Cadence + elevation row */}
               <div className="grid grid-cols-2 gap-3">
-                <div className="flex flex-col gap-1">
-                  <label className="text-sm font-medium text-gray-700">Avg cadence (spm)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={runCadence}
-                    onChange={e => setRunCadence(e.target.value)}
-                    placeholder="e.g. 170"
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-                  />
-                </div>
+                
                 <div className="flex flex-col gap-1">
                   <label className="text-sm font-medium text-gray-700">Elevation gain (m)</label>
                   <input
@@ -616,18 +605,7 @@ export default function WorkoutForm() {
                 </div>
               </div>
 
-              {/* Elevation loss */}
-              <div className="flex flex-col gap-1">
-                <label className="text-sm font-medium text-gray-700">Elevation loss (m)</label>
-                <input
-                  type="number"
-                  min={0}
-                  value={runElevLoss}
-                  onChange={e => setRunElevLoss(e.target.value)}
-                  placeholder="e.g. 95"
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-                />
-              </div>
+             
 
               {/* RPE */}
               <div className="flex flex-col gap-1">
@@ -653,6 +631,16 @@ export default function WorkoutForm() {
                   rows={2}
                   placeholder="How did it feel?"
                   className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 resize-none"
+                />
+              </div>
+
+              <div>
+                <label>Date & Time</label>
+                <input
+                  type="datetime-local"
+                  value={workoutDate}
+                  onChange={(e) => setWorkoutDate(e.target.value)}
+                  max={new Date().toISOString().slice(0, 16)} // prevent future dates
                 />
               </div>
             </div>
@@ -784,17 +772,7 @@ export default function WorkoutForm() {
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
                   />
                 </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-sm font-medium text-gray-700">Elevation loss (m)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={cycleElevLoss}
-                    onChange={e => setCycleElevLoss(e.target.value)}
-                    placeholder="e.g. 800"
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-                  />
-                </div>
+               
               </div>
 
               {/* RPE */}
@@ -821,6 +799,16 @@ export default function WorkoutForm() {
                   rows={2}
                   placeholder="How did it feel?"
                   className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 resize-none"
+                />
+              </div>
+
+              <div>
+                <label>Date & Time</label>
+                <input
+                  type="datetime-local"
+                  value={workoutDate}
+                  onChange={(e) => setWorkoutDate(e.target.value)}
+                  max={new Date().toISOString().slice(0, 16)} // prevent future dates
                 />
               </div>
             </div>
