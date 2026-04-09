@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 
@@ -17,6 +17,37 @@ const defaultSet = () => ({ reps: 0, weight: 0 });
 
 const RUN_TYPES = ['easy', 'tempo', 'interval', 'long', 'race'] as const;
 const CYCLE_TYPES = ['easy', 'endurance', 'tempo', 'interval', 'climb', 'race'] as const;
+const RPE_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
+
+// ─── Stone design tokens ────────────────────────────────────────────────────
+// bg page:      #FAF7F2
+// bg card:      #FFFFFF   border: #EDE5DB
+// bg input:     #FAF7F2   border: #EDE5DB  focus-border: #C4622A
+// text primary: #1C1612
+// text muted:   #9B8575
+// text hint:    #CCC1B5
+// accent:       #C4622A
+// accent-light: #FDF1EA   accent-border: #ECD5C5
+// cta bg:       #1C1612
+// ────────────────────────────────────────────────────────────────────────────
+
+function computePace(distance: string, duration: string, unit: 'km' | 'mi'): string | null {
+  const d = parseFloat(distance);
+  const dur = parseFloat(duration);
+  if (!d || !dur || d <= 0 || dur <= 0) return null;
+  const paceMin = dur / d;
+  const mins = Math.floor(paceMin);
+  const secs = Math.round((paceMin - mins) * 60);
+  return `${mins}:${secs < 10 ? '0' : ''}${secs} /${unit}`;
+}
+
+function computeSpeed(distance: string, duration: string, unit: 'km' | 'mi'): string | null {
+  const d = parseFloat(distance);
+  const dur = parseFloat(duration);
+  if (!d || !dur || d <= 0 || dur <= 0) return null;
+  const speed = d / (dur / 60);
+  return `${speed.toFixed(1)} ${unit}/h`;
+}
 
 export default function WorkoutForm() {
   const pathname = usePathname();
@@ -43,7 +74,6 @@ export default function WorkoutForm() {
   const [runAvgHR, setRunAvgHR] = useState('');
   const [runMaxHR, setRunMaxHR] = useState('');
   const [runElevGain, setRunElevGain] = useState('');
-  const [runRpe, setRunRpe] = useState('');
   const [runNotes, setRunNotes] = useState('');
 
   // --- cycling state ---
@@ -58,10 +88,21 @@ export default function WorkoutForm() {
   const [cycleRpe, setCycleRpe] = useState('');
   const [cycleNotes, setCycleNotes] = useState('');
 
-  const [workoutDate, setWorkoutDate] = useState<string>(
-  new Date().toISOString().slice(0, 16) // "YYYY-MM-DDTHH:mm"
-);
+  const [workoutDate, setWorkoutDate] = useState<string>(() => {
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  });
 
+  // --- computed stats ---
+  const runPace = useMemo(
+    () => computePace(runDistance, duration, runUnit),
+    [runDistance, duration, runUnit]
+  );
+  const cycleSpeed = useMemo(
+    () => computeSpeed(cycleDistance, duration, cycleUnit),
+    [cycleDistance, duration, cycleUnit]
+  );
 
   // --- lifting helpers ---
   const addExercise = () => {
@@ -117,7 +158,7 @@ export default function WorkoutForm() {
   };
 
   // --- submit ---
-  const handleSubmit = async (e: React.SubmitEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError(null);
     setSubmitting(true);
@@ -193,7 +234,7 @@ export default function WorkoutForm() {
             name: workoutName || `${runType.charAt(0).toUpperCase() + runType.slice(1)} run`,
             user_id: user.id,
             duration: durationSeconds,
-            rpe: runRpe ? parseFloat(runRpe) : null,
+            rpe: sessionRPE ? parseFloat(sessionRPE) : null,
             session_type: 'running',
             created_at: new Date(workoutDate).toISOString()
           })
@@ -306,57 +347,62 @@ export default function WorkoutForm() {
     }
   };
 
+  // ─── Shared class helpers ──────────────────────────────────────────────────
+  const inputCls =
+    'w-full bg-[#FAF7F2] border border-[#EDE5DB] rounded-xl px-3.5 py-2.5 text-sm text-[#1C1612] placeholder-[#CCC1B5] focus:outline-none focus:border-[#C4622A] focus:bg-white transition-colors';
+
+  const sectionLabelCls =
+    'text-[10px] font-semibold uppercase tracking-widest text-[#9B8575]';
+
+  const fieldLabelCls = 'text-xs font-semibold text-[#9B8575] tracking-wide';
+
+  const cardCls =
+    'bg-white border border-[#EDE5DB] rounded-2xl p-5 flex flex-col gap-4';
+
   return (
-    <div className="min-h-screen bg-gray-50 px-4 py-10">
-      <Sidebar/>
+    <div className="min-h-screen bg-[#FAF7F2] px-4 py-4">
+      <Sidebar />
 
       <div className="max-w-xl mx-auto">
-        <h1 className="text-2xl font-semibold text-gray-900 mb-1">Log Session</h1>
-        <p className="text-sm text-gray-500 mb-6">Track your lifting, running, or cycling session.</p>
 
-        {/* Session type toggle */}
-        <div className="flex mb-6 bg-gray-100 rounded-xl p-1 w-fit">
-          <button
-            type="button"
-            onClick={() => setSessionType('lifting')}
-            className={`px-5 py-2 rounded-lg text-sm font-medium transition-colors ${
-              sessionType === 'lifting'
-                ? 'bg-white text-gray-900 shadow-sm'
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Lifting
-          </button>
-          <button
-            type="button"
-            onClick={() => setSessionType('running')}
-            className={`px-5 py-2 rounded-lg text-sm font-medium transition-colors ${
-              sessionType === 'running'
-                ? 'bg-white text-gray-900 shadow-sm'
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Running
-          </button>
-          <button
-            type="button"
-            onClick={() => setSessionType('cycling')}
-            className={`px-5 py-2 rounded-lg text-sm font-medium transition-colors ${
-              sessionType === 'cycling'
-                ? 'bg-white text-gray-900 shadow-sm'
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Cycling
-          </button>
+        {/* ── Page header ── */}
+        <div className="mb-1">
+          <p className={`${sectionLabelCls} mb-1`}>Training log</p>
+          <h1 className="text-[34px] font-bold text-[#1C1612] leading-tight" style={{ fontFamily: 'Georgia, serif' }}>
+            Log your session
+          </h1>
+          <p className="text-sm text-[#9B8575] italic mt-1">
+            Track your lifting, running, or cycling session.
+          </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-6">
+        {/* ── Session type tabs ── */}
+        <div className="flex border-b border-[#EDE5DB] mt-7 mb-6">
+          {(['lifting', 'running', 'cycling'] as const).map(type => (
+            <button
+              key={type}
+              type="button"
+              onClick={() => setSessionType(type)}
+              className={`flex-1 pb-3 text-sm font-semibold capitalize transition-colors border-b-2 -mb-px ${
+                sessionType === type
+                  ? 'text-[#1C1612] border-[#C4622A]'
+                  : 'text-[#9B8575] border-transparent hover:text-[#1C1612]'
+              }`}
+            >
+              {type}
+            </button>
+          ))}
+        </div>
 
-          {/* Workout name (shared) */}
-          <div className="flex flex-col gap-1">
-            <label className="text-sm font-medium text-gray-700">
-              {sessionType === 'lifting' ? 'Workout name' : 'Session name (optional)'}
+        <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+
+          {/* ── Shared: session name ── */}
+          <div className="flex flex-col gap-1.5">
+            <label className={fieldLabelCls}>
+              {sessionType === 'lifting' ? 'Workout name' : 'Session name'}
+              {sessionType !== 'lifting' && (
+                <span className="text-[#CCC1B5] font-normal ml-1">(optional)</span>
+              )}
             </label>
             <input
               type="text"
@@ -367,44 +413,41 @@ export default function WorkoutForm() {
                 sessionType === 'cycling' ? 'e.g. Sunday endurance ride' :
                 'e.g. Push day'
               }
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+              className={inputCls}
             />
           </div>
 
-          {/* Duration (shared) */}
-          <div className="flex flex-col gap-1">
-            <label className="text-sm font-medium text-gray-700">Duration (minutes)</label>
+          {/* ── Shared: duration ── */}
+          <div className="flex flex-col gap-1.5">
+            <label className={fieldLabelCls}>Duration (minutes)</label>
             <input
               type="number"
               min={0}
               value={duration}
               onChange={e => setDuration(e.target.value)}
               placeholder="e.g. 45"
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+              className={inputCls}
             />
           </div>
 
-          {/* ---- LIFTING FORM ---- */}
+          {/* ════════════════ LIFTING ════════════════ */}
           {sessionType === 'lifting' && (
             <>
               {exercises.map((ex, exIdx) => (
-                <div
-                  key={exIdx}
-                  className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm flex flex-col gap-4"
-                >
+                <div key={exIdx} className={cardCls}>
                   <div className="flex items-center gap-2">
                     <input
                       type="text"
                       value={ex.name}
                       onChange={e => updateExerciseName(exIdx, e.target.value)}
                       placeholder="Exercise name"
-                      className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-gray-900"
+                      className={`${inputCls} flex-1 font-medium`}
                     />
                     {exercises.length > 1 && (
                       <button
                         type="button"
                         onClick={() => removeExercise(exIdx)}
-                        className="text-gray-400 hover:text-red-500 text-sm px-2 transition-colors"
+                        className="text-[#CCC1B5] hover:text-red-400 text-sm px-2 transition-colors"
                       >
                         Remove
                       </button>
@@ -412,10 +455,10 @@ export default function WorkoutForm() {
                   </div>
 
                   <div className="flex flex-col gap-2">
-                    <div className="grid grid-cols-[2rem_1fr_1fr_2rem] gap-2 px-1">
-                      <span className="text-xs text-gray-400 text-center">Set</span>
-                      <span className="text-xs text-gray-400 text-center">Reps</span>
-                      <span className="text-xs text-gray-400 text-center">Weight (kg)</span>
+                    <div className="grid grid-cols-[2rem_1fr_1fr_2rem] gap-2">
+                      <span />
+                      <span className={`${sectionLabelCls} text-center`}>Reps</span>
+                      <span className={`${sectionLabelCls} text-center`}>kg</span>
                       <span />
                     </div>
 
@@ -424,14 +467,14 @@ export default function WorkoutForm() {
                         key={setIdx}
                         className="grid grid-cols-[2rem_1fr_1fr_2rem] gap-2 items-center"
                       >
-                        <span className="text-sm text-gray-500 text-center">{setIdx + 1}</span>
+                        <span className="text-xs text-[#9B8575] text-center font-semibold">{setIdx + 1}</span>
                         <input
                           type="number"
                           min={0}
                           value={s.reps === 0 ? '' : s.reps}
                           onChange={e => updateSet(exIdx, setIdx, 'reps', Number(e.target.value))}
                           placeholder="0"
-                          className="border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-gray-900"
+                          className={`${inputCls} text-center`}
                         />
                         <input
                           type="number"
@@ -440,13 +483,13 @@ export default function WorkoutForm() {
                           value={s.weight === 0 ? '' : s.weight}
                           onChange={e => updateSet(exIdx, setIdx, 'weight', Number(e.target.value))}
                           placeholder="0"
-                          className="border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-gray-900"
+                          className={`${inputCls} text-center`}
                         />
                         {ex.sets.length > 1 ? (
                           <button
                             type="button"
                             onClick={() => removeSet(exIdx, setIdx)}
-                            className="text-gray-300 hover:text-red-400 text-lg leading-none transition-colors"
+                            className="text-[#CCC1B5] hover:text-red-400 text-lg leading-none transition-colors"
                           >
                             ×
                           </button>
@@ -460,7 +503,7 @@ export default function WorkoutForm() {
                   <button
                     type="button"
                     onClick={() => addSet(exIdx)}
-                    className="self-start text-sm text-gray-500 hover:text-gray-900 font-medium transition-colors"
+                    className="self-start text-xs font-semibold text-[#9B8575] hover:text-[#C4622A] transition-colors tracking-wide uppercase"
                   >
                     + Add set
                   </button>
@@ -470,46 +513,52 @@ export default function WorkoutForm() {
               <button
                 type="button"
                 onClick={addExercise}
-                className="border border-dashed border-gray-300 rounded-2xl py-3 text-sm text-gray-500 hover:border-gray-400 hover:text-gray-700 transition-colors"
+                className="border border-dashed border-[#EDE5DB] rounded-2xl py-3.5 text-sm font-semibold text-[#9B8575] hover:border-[#C4622A] hover:text-[#C4622A] transition-colors"
               >
                 + Add exercise
               </button>
 
-              <div className="flex flex-col gap-1">
-                <label className="text-sm font-medium text-gray-700">RPE of session (1–10)</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={10}
-                  step={0.5}
-                  value={rpe}
-                  onChange={e => setRpe(e.target.value)}
-                  placeholder="e.g. 7"
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-                />
+              {/* Lifting RPE */}
+              <div className={cardCls}>
+                <p className={sectionLabelCls}>Perceived effort</p>
+                <div className="flex gap-1.5">
+                  {RPE_VALUES.map(v => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setRpe(String(v))}
+                      className={`flex-1 h-9 rounded-lg border text-xs font-semibold transition-all ${
+                        rpe === String(v)
+                          ? 'bg-[#C4622A] border-[#C4622A] text-white'
+                          : 'bg-white border-[#EDE5DB] text-[#9B8575] hover:border-[#C4622A] hover:text-[#C4622A]'
+                      }`}
+                    >
+                      {v}
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              <div>
-                <label>Date & Time</label>
+              <div className="flex flex-col gap-1.5">
+                <label className={fieldLabelCls}>Date & Time</label>
                 <input
                   type="datetime-local"
                   value={workoutDate}
-                  onChange={(e) => setWorkoutDate(e.target.value)}
-                  max={new Date().toISOString().slice(0, 16)} // prevent future dates
+                  onChange={e => setWorkoutDate(e.target.value)}
+                  className={inputCls}
                 />
               </div>
-
             </>
           )}
 
-          {/* ---- RUNNING FORM ---- */}
+          {/* ════════════════ RUNNING ════════════════ */}
           {sessionType === 'running' && (
-            <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm flex flex-col gap-5">
+            <>
+              {/* Distance & pace card */}
+              <div className={cardCls}>
+                <p className={sectionLabelCls}>Distance & pace</p>
 
-              {/* Distance + unit */}
-              <div className="flex flex-col gap-1">
-                <label className="text-sm font-medium text-gray-700">Distance</label>
-                <div className="flex gap-2">
+                <div className="flex gap-2 items-center">
                   <input
                     type="number"
                     min={0}
@@ -517,44 +566,52 @@ export default function WorkoutForm() {
                     value={runDistance}
                     onChange={e => setRunDistance(e.target.value)}
                     placeholder="0.00"
-                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                    className={`${inputCls} flex-1 text-2xl font-bold tracking-tight`}
+                    style={{ fontFamily: 'Georgia, serif' }}
                   />
-                  <div className="flex bg-gray-100 rounded-lg p-1">
-                    <button
-                      type="button"
-                      onClick={() => setRunUnit('km')}
-                      className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
-                        runUnit === 'km' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'
-                      }`}
-                    >
-                      km
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setRunUnit('mi')}
-                      className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
-                        runUnit === 'mi' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'
-                      }`}
-                    >
-                      mi
-                    </button>
+                  <div className="flex bg-[#F0E9E0] rounded-xl p-1 gap-0.5">
+                    {(['km', 'mi'] as const).map(u => (
+                      <button
+                        key={u}
+                        type="button"
+                        onClick={() => setRunUnit(u)}
+                        className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-all ${
+                          runUnit === u
+                            ? 'bg-white text-[#C4622A] shadow-sm'
+                            : 'text-[#9B8575]'
+                        }`}
+                      >
+                        {u}
+                      </button>
+                    ))}
                   </div>
                 </div>
+
+                {runPace && (
+                  <div className="flex items-center justify-between bg-[#FDF1EA] border border-[#ECD5C5] rounded-xl px-4 py-3">
+                    <span className="text-[10px] font-semibold uppercase tracking-widest text-[#C4622A]">
+                      Avg pace
+                    </span>
+                    <span className="text-xl font-bold text-[#C4622A]" style={{ fontFamily: 'Georgia, serif' }}>
+                      {runPace}
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* Run type */}
-              <div className="flex flex-col gap-1">
-                <label className="text-sm font-medium text-gray-700">Run type</label>
+              <div className={cardCls}>
+                <p className={sectionLabelCls}>Run type</p>
                 <div className="flex flex-wrap gap-2">
                   {RUN_TYPES.map(t => (
                     <button
                       key={t}
                       type="button"
                       onClick={() => setRunType(t)}
-                      className={`px-4 py-1.5 rounded-lg text-sm font-medium capitalize transition-colors border ${
+                      className={`px-4 py-1.5 rounded-full border text-sm font-semibold capitalize transition-all ${
                         runType === t
-                          ? 'bg-gray-900 border-gray-900 text-white'
-                          : 'border-gray-300 text-gray-600 hover:border-gray-400'
+                          ? 'bg-[#C4622A] border-[#C4622A] text-white'
+                          : 'bg-white border-[#EDE5DB] text-[#9B8575] hover:border-[#C4622A] hover:text-[#C4622A]'
                       }`}
                     >
                       {t}
@@ -563,97 +620,101 @@ export default function WorkoutForm() {
                 </div>
               </div>
 
-              {/* Heart rate row */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="flex flex-col gap-1">
-                  <label className="text-sm font-medium text-gray-700">Avg heart rate (bpm)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={runAvgHR}
-                    onChange={e => setRunAvgHR(e.target.value)}
-                    placeholder="e.g. 148"
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-                  />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-sm font-medium text-gray-700">Max heart rate (bpm)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={runMaxHR}
-                    onChange={e => setRunMaxHR(e.target.value)}
-                    placeholder="e.g. 172"
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-                  />
-                </div>
-              </div>
-
-              {/* Cadence + elevation row */}
-              <div className="grid grid-cols-2 gap-3">
-                
-                <div className="flex flex-col gap-1">
-                  <label className="text-sm font-medium text-gray-700">Elevation gain (m)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={runElevGain}
-                    onChange={e => setRunElevGain(e.target.value)}
-                    placeholder="e.g. 120"
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-                  />
+              {/* Heart rate & elevation */}
+              <div className={cardCls}>
+                <p className={sectionLabelCls}>Heart rate & elevation</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <label className={fieldLabelCls}>Avg HR (bpm)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={runAvgHR}
+                      onChange={e => setRunAvgHR(e.target.value)}
+                      placeholder="148"
+                      className={inputCls}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className={fieldLabelCls}>Max HR (bpm)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={runMaxHR}
+                      onChange={e => setRunMaxHR(e.target.value)}
+                      placeholder="172"
+                      className={inputCls}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5 col-span-2">
+                    <label className={fieldLabelCls}>Elevation gain (m)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={runElevGain}
+                      onChange={e => setRunElevGain(e.target.value)}
+                      placeholder="120"
+                      className={inputCls}
+                    />
+                  </div>
                 </div>
               </div>
 
-             
-
-              {/* RPE */}
-              <div className="flex flex-col gap-1">
-                <label className="text-sm font-medium text-gray-700">RPE (1–10)</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={10}
-                  step={0.5}
-                  value={runRpe}
-                  onChange={e => setRunRpe(e.target.value)}
-                  placeholder="e.g. 6"
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-                />
+              {/* RPE tap grid */}
+              <div className={cardCls}>
+                <p className={sectionLabelCls}>Perceived effort (RPE)</p>
+                <div className="flex gap-1.5">
+                  {RPE_VALUES.map(v => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setSessionRPE(String(v))}
+                      className={`flex-1 h-9 rounded-lg border text-xs font-semibold transition-all ${
+                        sessionRPE === String(v)
+                          ? 'bg-[#C4622A] border-[#C4622A] text-white'
+                          : 'bg-white border-[#EDE5DB] text-[#9B8575] hover:border-[#C4622A] hover:text-[#C4622A]'
+                      }`}
+                    >
+                      {v}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Notes */}
-              <div className="flex flex-col gap-1">
-                <label className="text-sm font-medium text-gray-700">Notes</label>
+              <div className="flex flex-col gap-1.5">
+                <label className={fieldLabelCls}>
+                  Notes <span className="text-[#CCC1B5] font-normal">(optional)</span>
+                </label>
                 <textarea
                   value={runNotes}
                   onChange={e => setRunNotes(e.target.value)}
-                  rows={2}
-                  placeholder="How did it feel?"
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 resize-none"
+                  rows={3}
+                  placeholder="How did it feel? Any observations…"
+                  className={`${inputCls} resize-none`}
                 />
               </div>
 
-              <div>
-                <label>Date & Time</label>
+              <div className="flex flex-col gap-1.5">
+                <label className={fieldLabelCls}>Date & Time</label>
                 <input
                   type="datetime-local"
                   value={workoutDate}
-                  onChange={(e) => setWorkoutDate(e.target.value)}
-                  max={new Date().toISOString().slice(0, 16)} // prevent future dates
+                  onChange={e => setWorkoutDate(e.target.value)}
+                  className={inputCls}
                 />
               </div>
-            </div>
+            </>
           )}
 
-          {/* ---- CYCLING FORM ---- */}
+          {/* ════════════════ CYCLING ════════════════ */}
           {sessionType === 'cycling' && (
-            <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm flex flex-col gap-5">
+            <>
+              {/* Distance & speed card */}
+              <div className={cardCls}>
+                <p className={sectionLabelCls}>Distance & speed</p>
 
-              {/* Distance + unit */}
-              <div className="flex flex-col gap-1">
-                <label className="text-sm font-medium text-gray-700">Distance</label>
-                <div className="flex gap-2">
+                <div className="flex gap-2 items-center">
                   <input
                     type="number"
                     min={0}
@@ -661,44 +722,52 @@ export default function WorkoutForm() {
                     value={cycleDistance}
                     onChange={e => setCycleDistance(e.target.value)}
                     placeholder="0.00"
-                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                    className={`${inputCls} flex-1 text-2xl font-bold tracking-tight`}
+                    style={{ fontFamily: 'Georgia, serif' }}
                   />
-                  <div className="flex bg-gray-100 rounded-lg p-1">
-                    <button
-                      type="button"
-                      onClick={() => setCycleUnit('km')}
-                      className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
-                        cycleUnit === 'km' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'
-                      }`}
-                    >
-                      km
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setCycleUnit('mi')}
-                      className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
-                        cycleUnit === 'mi' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'
-                      }`}
-                    >
-                      mi
-                    </button>
+                  <div className="flex bg-[#F0E9E0] rounded-xl p-1 gap-0.5">
+                    {(['km', 'mi'] as const).map(u => (
+                      <button
+                        key={u}
+                        type="button"
+                        onClick={() => setCycleUnit(u)}
+                        className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-all ${
+                          cycleUnit === u
+                            ? 'bg-white text-[#C4622A] shadow-sm'
+                            : 'text-[#9B8575]'
+                        }`}
+                      >
+                        {u}
+                      </button>
+                    ))}
                   </div>
                 </div>
+
+                {cycleSpeed && (
+                  <div className="flex items-center justify-between bg-[#FDF1EA] border border-[#ECD5C5] rounded-xl px-4 py-3">
+                    <span className="text-[10px] font-semibold uppercase tracking-widest text-[#C4622A]">
+                      Avg speed
+                    </span>
+                    <span className="text-xl font-bold text-[#C4622A]" style={{ fontFamily: 'Georgia, serif' }}>
+                      {cycleSpeed}
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* Ride type */}
-              <div className="flex flex-col gap-1">
-                <label className="text-sm font-medium text-gray-700">Ride type</label>
+              <div className={cardCls}>
+                <p className={sectionLabelCls}>Ride type</p>
                 <div className="flex flex-wrap gap-2">
                   {CYCLE_TYPES.map(t => (
                     <button
                       key={t}
                       type="button"
                       onClick={() => setCycleType(t)}
-                      className={`px-4 py-1.5 rounded-lg text-sm font-medium capitalize transition-colors border ${
+                      className={`px-4 py-1.5 rounded-full border text-sm font-semibold capitalize transition-all ${
                         cycleType === t
-                          ? 'bg-gray-900 border-gray-900 text-white'
-                          : 'border-gray-300 text-gray-600 hover:border-gray-400'
+                          ? 'bg-[#C4622A] border-[#C4622A] text-white'
+                          : 'bg-white border-[#EDE5DB] text-[#9B8575] hover:border-[#C4622A] hover:text-[#C4622A]'
                       }`}
                     >
                       {t}
@@ -707,124 +776,138 @@ export default function WorkoutForm() {
                 </div>
               </div>
 
-              {/* Power + cadence */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="flex flex-col gap-1">
-                  <label className="text-sm font-medium text-gray-700">Avg power (W)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={cycleAvgPower}
-                    onChange={e => setCycleAvgPower(e.target.value)}
-                    placeholder="e.g. 210"
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-                  />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-sm font-medium text-gray-700">Avg cadence (rpm)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={cycleCadence}
-                    onChange={e => setCycleCadence(e.target.value)}
-                    placeholder="e.g. 88"
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-                  />
-                </div>
-              </div>
-
-              {/* Heart rate */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="flex flex-col gap-1">
-                  <label className="text-sm font-medium text-gray-700">Avg heart rate (bpm)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={cycleAvgHR}
-                    onChange={e => setCycleAvgHR(e.target.value)}
-                    placeholder="e.g. 142"
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-                  />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-sm font-medium text-gray-700">Max heart rate (bpm)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={cycleMaxHR}
-                    onChange={e => setCycleMaxHR(e.target.value)}
-                    placeholder="e.g. 168"
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-                  />
+              {/* Power & cadence */}
+              <div className={cardCls}>
+                <p className={sectionLabelCls}>Power & cadence</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <label className={fieldLabelCls}>Avg power (W)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={cycleAvgPower}
+                      onChange={e => setCycleAvgPower(e.target.value)}
+                      placeholder="210"
+                      className={inputCls}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className={fieldLabelCls}>Avg cadence (rpm)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={cycleCadence}
+                      onChange={e => setCycleCadence(e.target.value)}
+                      placeholder="88"
+                      className={inputCls}
+                    />
+                  </div>
                 </div>
               </div>
 
-              {/* Elevation */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="flex flex-col gap-1">
-                  <label className="text-sm font-medium text-gray-700">Elevation gain (m)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={cycleElevGain}
-                    onChange={e => setCycleElevGain(e.target.value)}
-                    placeholder="e.g. 850"
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-                  />
+              {/* Heart rate & elevation */}
+              <div className={cardCls}>
+                <p className={sectionLabelCls}>Heart rate & elevation</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <label className={fieldLabelCls}>Avg HR (bpm)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={cycleAvgHR}
+                      onChange={e => setCycleAvgHR(e.target.value)}
+                      placeholder="142"
+                      className={inputCls}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className={fieldLabelCls}>Max HR (bpm)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={cycleMaxHR}
+                      onChange={e => setCycleMaxHR(e.target.value)}
+                      placeholder="168"
+                      className={inputCls}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5 col-span-2">
+                    <label className={fieldLabelCls}>Elevation gain (m)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={cycleElevGain}
+                      onChange={e => setCycleElevGain(e.target.value)}
+                      placeholder="850"
+                      className={inputCls}
+                    />
+                  </div>
                 </div>
-               
               </div>
 
-              {/* RPE */}
-              <div className="flex flex-col gap-1">
-                <label className="text-sm font-medium text-gray-700">RPE (1–10)</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={10}
-                  step={0.5}
-                  value={cycleRpe}
-                  onChange={e => setCycleRpe(e.target.value)}
-                  placeholder="e.g. 7"
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-                />
+              {/* RPE tap grid */}
+              <div className={cardCls}>
+                <p className={sectionLabelCls}>Perceived effort (RPE)</p>
+                <div className="flex gap-1.5">
+                  {RPE_VALUES.map(v => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setCycleRpe(String(v))}
+                      className={`flex-1 h-9 rounded-lg border text-xs font-semibold transition-all ${
+                        cycleRpe === String(v)
+                          ? 'bg-[#C4622A] border-[#C4622A] text-white'
+                          : 'bg-white border-[#EDE5DB] text-[#9B8575] hover:border-[#C4622A] hover:text-[#C4622A]'
+                      }`}
+                    >
+                      {v}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Notes */}
-              <div className="flex flex-col gap-1">
-                <label className="text-sm font-medium text-gray-700">Notes</label>
+              <div className="flex flex-col gap-1.5">
+                <label className={fieldLabelCls}>
+                  Notes <span className="text-[#CCC1B5] font-normal">(optional)</span>
+                </label>
                 <textarea
                   value={cycleNotes}
                   onChange={e => setCycleNotes(e.target.value)}
-                  rows={2}
-                  placeholder="How did it feel?"
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 resize-none"
+                  rows={3}
+                  placeholder="How did it feel? Any observations…"
+                  className={`${inputCls} resize-none`}
                 />
               </div>
 
-              <div>
-                <label>Date & Time</label>
+              <div className="flex flex-col gap-1.5">
+                <label className={fieldLabelCls}>Date & Time</label>
                 <input
                   type="datetime-local"
                   value={workoutDate}
-                  onChange={(e) => setWorkoutDate(e.target.value)}
-                  max={new Date().toISOString().slice(0, 16)} // prevent future dates
+                  onChange={e => setWorkoutDate(e.target.value)}
+                  className={inputCls}
                 />
               </div>
-            </div>
+            </>
           )}
 
+          {/* ── Error ── */}
           {error && (
-            <p className="text-sm text-red-600">{error}</p>
+            <p className="text-sm text-red-500 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
+              {error}
+            </p>
           )}
 
+          {/* ── Submit ── */}
           <button
             type="submit"
             disabled={submitting}
-            className="bg-gray-900 text-white rounded-lg py-2 text-sm font-medium hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full h-13 bg-[#1C1612] text-[#FAF7F2] rounded-xl py-3.5 text-sm font-semibold hover:bg-[#2C2218] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {submitting ? 'Saving...' : 'Save session'}
+            {submitting ? 'Saving…' : 'Save session'}
           </button>
+
         </form>
       </div>
     </div>
