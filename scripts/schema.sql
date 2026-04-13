@@ -94,7 +94,9 @@ create table daily_logs (
     log_date date not null,
     sleep integer,
     weight numeric,
+    stress integer check (stress between 1 and 5),
     soreness integer check (soreness between 1 and 5),
     motivation integer check (motivation between 1 and 5),
+    score integer,
 
 );

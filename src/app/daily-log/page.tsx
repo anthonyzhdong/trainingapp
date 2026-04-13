@@ -5,12 +5,61 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import Sidebar from '@/components/Sidebar';
 
+const STRESS_LABELS = ['None', 'Mild', 'Moderate', 'High', 'Severe'];
 const SORENESS_LABELS = ['None', 'Mild', 'Moderate', 'High', 'Severe'];
 const MOTIVATION_LABELS = ['Very Low', 'Low', 'Moderate', 'High', 'Very High'];
 const SLEEP_LABELS = ['Terrible', 'Poor', 'Fair', 'Good', 'Excellent'];
+const STRESS_EMOJIS = ['😌', '🙂', '😐', '😣', '🤕'];
 const SORENESS_EMOJIS = ['😌', '🙂', '😐', '😣', '🤕'];
 const MOTIVATION_EMOJIS = ['😴', '😕', '😊', '💪', '🔥'];
 const SLEEP_EMOJIS = ['😫', '😪', '😑', '🙂', '😴'];
+
+// Readiness score: sleep 40%, inverted soreness 35%, motivation 25%
+// Grounded in Olympic S&C literature (Halson 2014, Kellmann et al. 2018)
+function computeReadiness(sleep: number, soreness: number, motivation: number): number {
+  const raw = sleep * 0.40 + (6 - soreness) * 0.35 + motivation * 0.25;
+  return Math.round(((raw - 1) / 4) * 100);
+}
+
+type ReadinessTier = { label: string; recommendation: string; color: string; bg: string; ring: string };
+
+function getReadinessTier(score: number): ReadinessTier {
+  if (score >= 85) return {
+    label: 'Peak',
+    recommendation: 'Full intensity. Competition-ready — push planned load.',
+    color: 'text-emerald-700',
+    bg: 'bg-emerald-50',
+    ring: 'ring-emerald-400',
+  };
+  if (score >= 70) return {
+    label: 'High',
+    recommendation: 'Normal training load. Execute the session as programmed.',
+    color: 'text-green-700',
+    bg: 'bg-green-50',
+    ring: 'ring-green-400',
+  };
+  if (score >= 55) return {
+    label: 'Moderate',
+    recommendation: 'Reduce volume 10–20%. Monitor during warm-up and adjust.',
+    color: 'text-yellow-700',
+    bg: 'bg-yellow-50',
+    ring: 'ring-yellow-400',
+  };
+  if (score >= 40) return {
+    label: 'Low',
+    recommendation: 'Technique or aerobic session only. Drop intensity 30–40%.',
+    color: 'text-orange-700',
+    bg: 'bg-orange-50',
+    ring: 'ring-orange-400',
+  };
+  return {
+    label: 'Very Low',
+    recommendation: 'Active recovery only. High injury risk — do not push load.',
+    color: 'text-red-700',
+    bg: 'bg-red-50',
+    ring: 'ring-red-400',
+  };
+}
 
 export default function DailyLogPage() {
   const router = useRouter();
@@ -23,6 +72,7 @@ export default function DailyLogPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [stress, setStress] = useState<number | null>(null);
 
   useEffect(() => {
     async function loadLog() {
@@ -86,7 +136,7 @@ export default function DailyLogPage() {
       const payload = {
         weight: weight ? parseFloat(weight) : null,
         sleep: sleep ?? null,
-        soreness: soreness ?? null,
+        soreness: stress ?? null,
         motivation: motivation ?? null,
       };
 
@@ -148,7 +198,6 @@ export default function DailyLogPage() {
                   step={0.1}
                   value={weight}
                   onChange={e => setWeight(e.target.value)}
-                  placeholder="e.g. 75.5"
                   className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 w-44"
                 />
               </div>
@@ -203,6 +252,29 @@ export default function DailyLogPage() {
                 </p>
               </div>
 
+              <div className = "felx flex-col gap-2">
+                <label className="text-sm font-medium text-gray-700">Stress</label>
+                <div className="flex gap-2">
+                  {[1, 2, 3, 4, 5].map(v => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setStress(stress === v ? null : v)}
+                      className={`flex flex-col items-center gap-1 px-3 py-2.5 rounded-xl border text-sm font-medium transition-colors ${
+                        stress === v
+                          ? 'bg-gray-900 border-gray-900 text-white'
+                          : 'border-gray-200 text-gray-600 bg-white hover:border-gray-400 hover:bg-gray-50'
+                      }`}
+                    >
+                      <span className="text-xl">{STRESS_EMOJIS[v - 1]}</span>
+                      <span className="text-xs">{v}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-400 min-h-[1rem]">
+                  {stress ? STRESS_LABELS[stress - 1] : 'Select a level'}
+                </p>
+              </div>
               {/* Motivation */}
               <div className="flex flex-col gap-2">
                 <label className="text-sm font-medium text-gray-700">Motivation</label>
@@ -227,6 +299,24 @@ export default function DailyLogPage() {
                   {motivation ? MOTIVATION_LABELS[motivation - 1] : 'Select a level'}
                 </p>
               </div>
+
+              {/* Readiness Score */}
+              {sleep !== null && stress !== null && motivation !== null && (() => {
+                const score = computeReadiness(sleep, stress, motivation);
+                const tier = getReadinessTier(score);
+                return (
+                  <div className={`flex items-center gap-5 rounded-2xl border px-5 py-4 ${tier.bg} ring-1 ${tier.ring}`}>
+                    <div className={`flex-shrink-0 w-16 h-16 rounded-full ring-4 ${tier.ring} flex flex-col items-center justify-center`}>
+                      <span className={`text-2xl font-bold leading-none ${tier.color}`}>{score}</span>
+                      <span className={`text-[10px] font-medium uppercase tracking-wide ${tier.color} opacity-70`}>/ 100</span>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <span className={`text-sm font-semibold ${tier.color}`}>Readiness: {tier.label}</span>
+                      <span className="text-xs text-gray-600 leading-snug">{tier.recommendation}</span>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {error && <p className="text-sm text-red-600">{error}</p>}
               {success && <p className="text-sm text-green-600">Log saved.</p>}
