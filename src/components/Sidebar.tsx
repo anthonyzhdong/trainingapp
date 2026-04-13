@@ -8,6 +8,7 @@ const navItems = [
   { label: 'Daily Log', href: '/daily-log' },
   { label: 'History', href: '/history' },
   { label: 'Profile', href: '/profile' },
+  { label: 'Dashboard', href: '/dashboard' },
 ];
 
 export default function Sidebar() {
