@@ -17,8 +17,9 @@ const SLEEP_EMOJIS = ['😫', '😪', '😑', '🙂', '😴'];
 // Readiness score: sleep 25%, inverted soreness 25%, inverted stress 25%, motivation 25%
 // Grounded in Olympic S&C literature (Halson 2014, Kellmann et al. 2018)
 function computeReadiness(sleep: number, soreness: number, stress: number, motivation: number): number {
-  const raw = (sleep + (6 - soreness) + (6 - stress) + motivation) * 0.25;
-  return Math.round(((raw - 1) / 4) * 100);
+  const raw = ((sleep + (6- soreness) + (6- stress) + motivation) - 4) / 16  * 100;
+  //return Math.round(((raw - 1) / 4) * 100);
+  return Math.round(raw);
 }
 
 type ReadinessTier = { label: string; recommendation: string; color: string; bg: string; ring: string };
@@ -63,16 +64,22 @@ function getReadinessTier(score: number): ReadinessTier {
 
 export default function DailyLogPage() {
   const router = useRouter();
-  const [logDate, setLogDate] = useState(new Date().toISOString().slice(0, 10));
+  const today = new Date();
+  const localToday = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const [logDate, setLogDate] = useState(localToday);
+
   const [weight, setWeight] = useState('');
   const [sleep, setSleep] = useState<number | null>(null);
   const [soreness, setSoreness] = useState<number | null>(null);
   const [motivation, setMotivation] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [stress, setStress] = useState<number | null>(null);
+
+  const [score, setScore] = useState<number | null>(null);
+
+const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [stress, setStress] = useState<number | null>(null);
-  const [savedReadiness, setSavedReadiness] = useState<number | null>(null);
+  
   const [isEditing, setIsEditing] = useState(true);
 
   useEffect(() => {
@@ -101,7 +108,7 @@ export default function DailyLogPage() {
         setStress(data.stress ?? null);
         setMotivation(data.motivation ?? null);
         const s = data.sleep, so = data.soreness, st = data.stress, m = data.motivation;
-        setSavedReadiness(s && so && st && m ? computeReadiness(s, so, st, m) : null);
+        setScore(s && so && st && m ? computeReadiness(s, so, st, m) : null);
         setIsEditing(false);
       } else {
         setWeight('');
@@ -109,7 +116,7 @@ export default function DailyLogPage() {
         setSoreness(null);
         setMotivation(null);
         setStress(null);
-        setSavedReadiness(null);
+        setScore(null);
         setIsEditing(true);
       }
 
@@ -145,6 +152,7 @@ export default function DailyLogPage() {
         soreness: soreness ?? null,
         stress: stress ?? null,
         motivation: motivation ?? null,
+        score: score ?? null,
       };
 
       let dbError;
@@ -164,8 +172,8 @@ export default function DailyLogPage() {
       if (dbError) {
         setError(dbError.message);
       } else {
-        if (sleep !== null && stress !== null && motivation !== null) {
-          setSavedReadiness(computeReadiness(sleep, soreness ?? stress, stress, motivation));
+        if (sleep !== null && soreness !== null && stress !== null && motivation !== null) {
+          setScore(computeReadiness(sleep, soreness, stress, motivation));
         }
         setIsEditing(false);
       }
@@ -180,19 +188,20 @@ export default function DailyLogPage() {
       <input
         type="date"
         value={logDate}
-        max={new Date().toISOString().slice(0, 10)}
+        max={localToday}
+        defaultValue={localToday}
         onChange={e => setLogDate(e.target.value)}
         className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 w-fit"
       />
     </div>
   );
 
-  const readinessCard = savedReadiness !== null && (() => {
-    const tier = getReadinessTier(savedReadiness);
+  const readinessCard = score !== null && (() => {
+    const tier = getReadinessTier(score);
     return (
       <div className={`flex items-center gap-5 rounded-2xl border px-5 py-4 ${tier.bg} ring-1 ${tier.ring}`}>
         <div className={`flex-shrink-0 w-16 h-16 rounded-full ring-4 ${tier.ring} flex flex-col items-center justify-center`}>
-          <span className={`text-2xl font-bold leading-none ${tier.color}`}>{savedReadiness}</span>
+          <span className={`text-2xl font-bold leading-none ${tier.color}`}>{score}</span>
           <span className={`text-[10px] font-medium uppercase tracking-wide ${tier.color} opacity-70`}>/ 100</span>
         </div>
         <div className="flex flex-col gap-0.5">
