@@ -14,10 +14,10 @@ const SORENESS_EMOJIS = ['😌', '🙂', '😐', '😣', '🤕'];
 const MOTIVATION_EMOJIS = ['😴', '😕', '😊', '💪', '🔥'];
 const SLEEP_EMOJIS = ['😫', '😪', '😑', '🙂', '😴'];
 
-// Readiness score: sleep 40%, inverted soreness 35%, motivation 25%
+// Readiness score: sleep 25%, inverted soreness 25%, inverted stress 25%, motivation 25%
 // Grounded in Olympic S&C literature (Halson 2014, Kellmann et al. 2018)
-function computeReadiness(sleep: number, soreness: number, motivation: number): number {
-  const raw = sleep * 0.40 + (6 - soreness) * 0.35 + motivation * 0.25;
+function computeReadiness(sleep: number, soreness: number, stress: number, motivation: number): number {
+  const raw = (sleep + (6 - soreness) + (6 - stress) + motivation) * 0.25;
   return Math.round(((raw - 1) / 4) * 100);
 }
 
@@ -71,13 +71,13 @@ export default function DailyLogPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
   const [stress, setStress] = useState<number | null>(null);
+  const [savedReadiness, setSavedReadiness] = useState<number | null>(null);
+  const [isEditing, setIsEditing] = useState(true);
 
   useEffect(() => {
     async function loadLog() {
       setLoading(true);
-      setSuccess(false);
       setError(null);
 
       const supabase = createClient();
@@ -89,21 +89,28 @@ export default function DailyLogPage() {
 
       const { data } = await supabase
         .from('daily_logs')
-        .select('weight, sleep, soreness, motivation')
+        .select('weight, sleep, soreness, stress, motivation')
         .eq('user_id', user.id)
         .eq('log_date', logDate)
         .maybeSingle();
 
       if (data) {
         setWeight(data.weight?.toString() ?? '');
-        setSleep(data.sleep?.toString() ?? '');
+        setSleep(data.sleep ?? null);
         setSoreness(data.soreness ?? null);
+        setStress(data.stress ?? null);
         setMotivation(data.motivation ?? null);
+        const s = data.sleep, so = data.soreness, st = data.stress, m = data.motivation;
+        setSavedReadiness(s && so && st && m ? computeReadiness(s, so, st, m) : null);
+        setIsEditing(false);
       } else {
         setWeight('');
         setSleep(null);
         setSoreness(null);
         setMotivation(null);
+        setStress(null);
+        setSavedReadiness(null);
+        setIsEditing(true);
       }
 
       setLoading(false);
@@ -115,7 +122,6 @@ export default function DailyLogPage() {
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError(null);
-    setSuccess(false);
     setSaving(true);
 
     try {
@@ -136,7 +142,8 @@ export default function DailyLogPage() {
       const payload = {
         weight: weight ? parseFloat(weight) : null,
         sleep: sleep ?? null,
-        soreness: stress ?? null,
+        soreness: soreness ?? null,
+        stress: stress ?? null,
         motivation: motivation ?? null,
       };
 
@@ -157,12 +164,44 @@ export default function DailyLogPage() {
       if (dbError) {
         setError(dbError.message);
       } else {
-        setSuccess(true);
+        if (sleep !== null && stress !== null && motivation !== null) {
+          setSavedReadiness(computeReadiness(sleep, soreness ?? stress, stress, motivation));
+        }
+        setIsEditing(false);
       }
     } finally {
       setSaving(false);
     }
   };
+
+  const datePicker = (
+    <div className="flex flex-col gap-1">
+      <label className="text-sm font-medium text-gray-700">Date</label>
+      <input
+        type="date"
+        value={logDate}
+        max={new Date().toISOString().slice(0, 10)}
+        onChange={e => setLogDate(e.target.value)}
+        className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 w-fit"
+      />
+    </div>
+  );
+
+  const readinessCard = savedReadiness !== null && (() => {
+    const tier = getReadinessTier(savedReadiness);
+    return (
+      <div className={`flex items-center gap-5 rounded-2xl border px-5 py-4 ${tier.bg} ring-1 ${tier.ring}`}>
+        <div className={`flex-shrink-0 w-16 h-16 rounded-full ring-4 ${tier.ring} flex flex-col items-center justify-center`}>
+          <span className={`text-2xl font-bold leading-none ${tier.color}`}>{savedReadiness}</span>
+          <span className={`text-[10px] font-medium uppercase tracking-wide ${tier.color} opacity-70`}>/ 100</span>
+        </div>
+        <div className="flex flex-col gap-0.5">
+          <span className={`text-sm font-semibold ${tier.color}`}>Readiness: {tier.label}</span>
+          <span className="text-xs text-gray-600 leading-snug">{tier.recommendation}</span>
+        </div>
+      </div>
+    );
+  })();
 
   return (
     <div className="min-h-screen flex">
@@ -171,166 +210,185 @@ export default function DailyLogPage() {
         <h1 className="text-2xl font-semibold text-gray-900 mb-1">Daily Log</h1>
         <p className="text-sm text-gray-500 mb-8">Track how your body feels each day.</p>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-7 max-w-md">
-
-          {/* Date */}
-          <div className="flex flex-col gap-1">
-            <label className="text-sm font-medium text-gray-700">Date</label>
-            <input
-              type="date"
-              value={logDate}
-              max={new Date().toISOString().slice(0, 10)}
-              onChange={e => setLogDate(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 w-fit"
-            />
-          </div>
-
-          {loading ? (
+        {loading ? (
+          <div className="flex flex-col gap-7 max-w-md">
+            {datePicker}
             <p className="text-sm text-gray-400">Loading...</p>
-          ) : (
-            <>
-              {/* Weight */}
-              <div className="flex flex-col gap-1">
-                <label className="text-sm font-medium text-gray-700">Weight (kg)</label>
-                <input
-                  type="number"
-                  min={0}
-                  step={0.1}
-                  value={weight}
-                  onChange={e => setWeight(e.target.value)}
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 w-44"
-                />
-              </div>
-
-              {/* Sleep */}
-              <div className="flex flex-col gap-2">
-                <label className="text-sm font-medium text-gray-700">Sleep quality</label>
-                <div className="flex gap-2">
-                  {[1, 2, 3, 4, 5].map(v => (
-                    <button
-                      key={v}
-                      type="button"
-                      onClick={() => setSleep(sleep === v ? null : v)}
-                      className={`flex flex-col items-center gap-1 px-3 py-2.5 rounded-xl border text-sm font-medium transition-colors ${
-                        sleep === v
-                          ? 'bg-gray-900 border-gray-900 text-white'
-                          : 'border-gray-200 text-gray-600 bg-white hover:border-gray-400 hover:bg-gray-50'
-                      }`}
-                    >
-                      <span className="text-xl">{SLEEP_EMOJIS[v - 1]}</span>
-                      <span className="text-xs">{v}</span>
-                    </button>
-                  ))}
+          </div>
+        ) : !isEditing ? (
+          /* ── Summary view ── */
+          <div className="flex flex-col gap-5 max-w-md">
+            {datePicker}
+            <div className="bg-white border border-gray-200 rounded-2xl divide-y divide-gray-100">
+              {weight && (
+                <div className="flex justify-between items-center px-5 py-3">
+                  <span className="text-sm text-gray-500">Weight</span>
+                  <span className="text-sm font-medium text-gray-900">{weight} kg</span>
                 </div>
-                <p className="text-xs text-gray-400 min-h-[1rem]">
-                  {sleep ? SLEEP_LABELS[sleep - 1] : 'Select a level'}
-                </p>
-              </div>
-
-              {/* Soreness */}
-              <div className="flex flex-col gap-2">
-                <label className="text-sm font-medium text-gray-700">Soreness</label>
-                <div className="flex gap-2">
-                  {[1, 2, 3, 4, 5].map(v => (
-                    <button
-                      key={v}
-                      type="button"
-                      onClick={() => setSoreness(soreness === v ? null : v)}
-                      className={`flex flex-col items-center gap-1 px-3 py-2.5 rounded-xl border text-sm font-medium transition-colors ${
-                        soreness === v
-                          ? 'bg-gray-900 border-gray-900 text-white'
-                          : 'border-gray-200 text-gray-600 bg-white hover:border-gray-400 hover:bg-gray-50'
-                      }`}
-                    >
-                      <span className="text-xl">{SORENESS_EMOJIS[v - 1]}</span>
-                      <span className="text-xs">{v}</span>
-                    </button>
-                  ))}
+              )}
+              {sleep !== null && (
+                <div className="flex justify-between items-center px-5 py-3">
+                  <span className="text-sm text-gray-500">Sleep</span>
+                  <span className="text-sm font-medium text-gray-900">{SLEEP_EMOJIS[sleep - 1]} {SLEEP_LABELS[sleep - 1]} <span className="text-gray-400 font-normal">{sleep}/5</span></span>
                 </div>
-                <p className="text-xs text-gray-400 min-h-[1rem]">
-                  {soreness ? SORENESS_LABELS[soreness - 1] : 'Select a level'}
-                </p>
-              </div>
-
-              <div className = "felx flex-col gap-2">
-                <label className="text-sm font-medium text-gray-700">Stress</label>
-                <div className="flex gap-2">
-                  {[1, 2, 3, 4, 5].map(v => (
-                    <button
-                      key={v}
-                      type="button"
-                      onClick={() => setStress(stress === v ? null : v)}
-                      className={`flex flex-col items-center gap-1 px-3 py-2.5 rounded-xl border text-sm font-medium transition-colors ${
-                        stress === v
-                          ? 'bg-gray-900 border-gray-900 text-white'
-                          : 'border-gray-200 text-gray-600 bg-white hover:border-gray-400 hover:bg-gray-50'
-                      }`}
-                    >
-                      <span className="text-xl">{STRESS_EMOJIS[v - 1]}</span>
-                      <span className="text-xs">{v}</span>
-                    </button>
-                  ))}
+              )}
+              {soreness !== null && (
+                <div className="flex justify-between items-center px-5 py-3">
+                  <span className="text-sm text-gray-500">Soreness</span>
+                  <span className="text-sm font-medium text-gray-900">{SORENESS_EMOJIS[soreness - 1]} {SORENESS_LABELS[soreness - 1]} <span className="text-gray-400 font-normal">{soreness}/5</span></span>
                 </div>
-                <p className="text-xs text-gray-400 min-h-[1rem]">
-                  {stress ? STRESS_LABELS[stress - 1] : 'Select a level'}
-                </p>
-              </div>
-              {/* Motivation */}
-              <div className="flex flex-col gap-2">
-                <label className="text-sm font-medium text-gray-700">Motivation</label>
-                <div className="flex gap-2">
-                  {[1, 2, 3, 4, 5].map(v => (
-                    <button
-                      key={v}
-                      type="button"
-                      onClick={() => setMotivation(motivation === v ? null : v)}
-                      className={`flex flex-col items-center gap-1 px-3 py-2.5 rounded-xl border text-sm font-medium transition-colors ${
-                        motivation === v
-                          ? 'bg-gray-900 border-gray-900 text-white'
-                          : 'border-gray-200 text-gray-600 bg-white hover:border-gray-400 hover:bg-gray-50'
-                      }`}
-                    >
-                      <span className="text-xl">{MOTIVATION_EMOJIS[v - 1]}</span>
-                      <span className="text-xs">{v}</span>
-                    </button>
-                  ))}
+              )}
+              {stress !== null && (
+                <div className="flex justify-between items-center px-5 py-3">
+                  <span className="text-sm text-gray-500">Stress</span>
+                  <span className="text-sm font-medium text-gray-900">{STRESS_EMOJIS[stress - 1]} {STRESS_LABELS[stress - 1]} <span className="text-gray-400 font-normal">{stress}/5</span></span>
                 </div>
-                <p className="text-xs text-gray-400 min-h-[1rem]">
-                  {motivation ? MOTIVATION_LABELS[motivation - 1] : 'Select a level'}
-                </p>
+              )}
+              {motivation !== null && (
+                <div className="flex justify-between items-center px-5 py-3">
+                  <span className="text-sm text-gray-500">Motivation</span>
+                  <span className="text-sm font-medium text-gray-900">{MOTIVATION_EMOJIS[motivation - 1]} {MOTIVATION_LABELS[motivation - 1]} <span className="text-gray-400 font-normal">{motivation}/5</span></span>
+                </div>
+              )}
+            </div>
+            {readinessCard}
+            <button
+              type="button"
+              onClick={() => setIsEditing(true)}
+              className="border border-gray-300 text-gray-700 rounded-lg py-2 text-sm font-medium hover:bg-gray-100 transition-colors w-full"
+            >
+              Edit log
+            </button>
+          </div>
+        ) : (
+          /* ── Edit form ── */
+          <form onSubmit={handleSubmit} className="flex flex-col gap-7 max-w-md">
+            {datePicker}
+
+            {/* Weight */}
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-medium text-gray-700">Weight (kg)</label>
+              <input
+                type="number"
+                min={0}
+                step={0.1}
+                value={weight}
+                onChange={e => setWeight(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 w-44"
+              />
+            </div>
+
+            {/* Sleep */}
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium text-gray-700">Sleep quality</label>
+              <div className="flex gap-2">
+                {[1, 2, 3, 4, 5].map(v => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setSleep(sleep === v ? null : v)}
+                    className={`flex flex-col items-center gap-1 px-3 py-2.5 rounded-xl border text-sm font-medium transition-colors ${
+                      sleep === v
+                        ? 'bg-gray-900 border-gray-900 text-white'
+                        : 'border-gray-200 text-gray-600 bg-white hover:border-gray-400 hover:bg-gray-50'
+                    }`}
+                  >
+                    <span className="text-xl">{SLEEP_EMOJIS[v - 1]}</span>
+                    <span className="text-xs">{v}</span>
+                  </button>
+                ))}
               </div>
+              <p className="text-xs text-gray-400 min-h-[1rem]">
+                {sleep ? SLEEP_LABELS[sleep - 1] : 'Select a level'}
+              </p>
+            </div>
 
-              {/* Readiness Score */}
-              {sleep !== null && stress !== null && motivation !== null && (() => {
-                const score = computeReadiness(sleep, stress, motivation);
-                const tier = getReadinessTier(score);
-                return (
-                  <div className={`flex items-center gap-5 rounded-2xl border px-5 py-4 ${tier.bg} ring-1 ${tier.ring}`}>
-                    <div className={`flex-shrink-0 w-16 h-16 rounded-full ring-4 ${tier.ring} flex flex-col items-center justify-center`}>
-                      <span className={`text-2xl font-bold leading-none ${tier.color}`}>{score}</span>
-                      <span className={`text-[10px] font-medium uppercase tracking-wide ${tier.color} opacity-70`}>/ 100</span>
-                    </div>
-                    <div className="flex flex-col gap-0.5">
-                      <span className={`text-sm font-semibold ${tier.color}`}>Readiness: {tier.label}</span>
-                      <span className="text-xs text-gray-600 leading-snug">{tier.recommendation}</span>
-                    </div>
-                  </div>
-                );
-              })()}
+            {/* Soreness */}
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium text-gray-700">Soreness</label>
+              <div className="flex gap-2">
+                {[1, 2, 3, 4, 5].map(v => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setSoreness(soreness === v ? null : v)}
+                    className={`flex flex-col items-center gap-1 px-3 py-2.5 rounded-xl border text-sm font-medium transition-colors ${
+                      soreness === v
+                        ? 'bg-gray-900 border-gray-900 text-white'
+                        : 'border-gray-200 text-gray-600 bg-white hover:border-gray-400 hover:bg-gray-50'
+                    }`}
+                  >
+                    <span className="text-xl">{SORENESS_EMOJIS[v - 1]}</span>
+                    <span className="text-xs">{v}</span>
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-gray-400 min-h-[1rem]">
+                {soreness ? SORENESS_LABELS[soreness - 1] : 'Select a level'}
+              </p>
+            </div>
 
-              {error && <p className="text-sm text-red-600">{error}</p>}
-              {success && <p className="text-sm text-green-600">Log saved.</p>}
+            {/* Stress */}
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium text-gray-700">Stress</label>
+              <div className="flex gap-2">
+                {[1, 2, 3, 4, 5].map(v => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setStress(stress === v ? null : v)}
+                    className={`flex flex-col items-center gap-1 px-3 py-2.5 rounded-xl border text-sm font-medium transition-colors ${
+                      stress === v
+                        ? 'bg-gray-900 border-gray-900 text-white'
+                        : 'border-gray-200 text-gray-600 bg-white hover:border-gray-400 hover:bg-gray-50'
+                    }`}
+                  >
+                    <span className="text-xl">{STRESS_EMOJIS[v - 1]}</span>
+                    <span className="text-xs">{v}</span>
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-gray-400 min-h-[1rem]">
+                {stress ? STRESS_LABELS[stress - 1] : 'Select a level'}
+              </p>
+            </div>
 
-              <button
-                type="submit"
-                disabled={saving}
-                className="bg-gray-900 text-white rounded-lg py-2 text-sm font-medium hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {saving ? 'Saving...' : 'Save log'}
-              </button>
-            </>
-          )}
-        </form>
+            {/* Motivation */}
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium text-gray-700">Motivation</label>
+              <div className="flex gap-2">
+                {[1, 2, 3, 4, 5].map(v => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setMotivation(motivation === v ? null : v)}
+                    className={`flex flex-col items-center gap-1 px-3 py-2.5 rounded-xl border text-sm font-medium transition-colors ${
+                      motivation === v
+                        ? 'bg-gray-900 border-gray-900 text-white'
+                        : 'border-gray-200 text-gray-600 bg-white hover:border-gray-400 hover:bg-gray-50'
+                    }`}
+                  >
+                    <span className="text-xl">{MOTIVATION_EMOJIS[v - 1]}</span>
+                    <span className="text-xs">{v}</span>
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-gray-400 min-h-[1rem]">
+                {motivation ? MOTIVATION_LABELS[motivation - 1] : 'Select a level'}
+              </p>
+            </div>
+
+            {error && <p className="text-sm text-red-600">{error}</p>}
+
+            <button
+              type="submit"
+              disabled={saving}
+              className="bg-gray-900 text-white rounded-lg py-2 text-sm font-medium hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {saving ? 'Saving...' : 'Save log'}
+            </button>
+          </form>
+        )}
       </main>
     </div>
   );
