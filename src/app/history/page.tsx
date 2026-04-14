@@ -72,6 +72,7 @@ interface Profile {
   sex: string | null;
   activity_level: string | null;
   unit_preference: 'metric' | 'imperial' | null;
+  calorie_adjustment: number | null;
 }
 
 // Calendar constants
@@ -169,7 +170,7 @@ export default function HistoryPage() {
           .order('created_at', { ascending: false }),
         supabase
           .from('profile')
-          .select('weight, height, age, sex, activity_level, unit_preference')
+          .select('weight, height, age, sex, activity_level, unit_preference, calorie_adjustment')
           .eq('user_id', user.id)
           .maybeSingle(),
       ]);
@@ -344,7 +345,8 @@ export default function HistoryPage() {
             cardTitle = 'Weekly Average — Daily Calorie Estimate';
           }
 
-          const tdee = calculateTDEE(bmr, p.activity_level!, workoutKcal);
+          const calorieAdjustment = p.calorie_adjustment ?? 0;
+          const tdee = calculateTDEE(bmr, p.activity_level!, workoutKcal) + calorieAdjustment;
 
           return (
             <div className="mb-5 bg-white rounded-2xl border border-gray-200 shadow-sm px-5 py-4">
@@ -375,6 +377,15 @@ export default function HistoryPage() {
                     <div>
                       <p className="text-xs text-gray-400 mb-0.5">{selectedDayIdx !== null ? 'Session' : 'Sessions this week'}</p>
                       <p className="text-sm font-semibold text-gray-900">{workoutLabel}</p>
+                    </div>
+                  </>
+                )}
+                {calorieAdjustment !== 0 && (
+                  <>
+                    <span className="text-gray-300 text-sm">{calorieAdjustment > 0 ? '+' : '−'}</span>
+                    <div>
+                      <p className="text-xs text-gray-400 mb-0.5">{calorieAdjustment > 0 ? 'Surplus' : 'Deficit'}</p>
+                      <p className="text-sm font-semibold text-gray-900">{Math.abs(calorieAdjustment).toLocaleString()} kcal</p>
                     </div>
                   </>
                 )}

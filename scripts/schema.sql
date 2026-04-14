@@ -9,6 +9,7 @@ create table profile (
     weight numeric,
     activity_level text,
     unit_preference text default 'metric' check (unit_preference in ('metric', 'imperial')),
+    calorie_adjustment integer default 0,  -- daily kcal offset: negative = deficit, positive = surplus
     created_at timestamptz default now(),
     updated_at timestamptz default now()
 )

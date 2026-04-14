@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client';
 import Sidebar from '@/components/Sidebar';
 import {
   calculateBMR,
+  calculateTDEE,
   calculateWorkoutKcal,
   calculateRunningKcal,
   calculateCyclingKcal,
@@ -692,7 +693,8 @@ export default function DisplayWorkout() {
   const [runningSessions, setRunningSessions] = useState<Record<string, RunningSession>>({});
   const [cyclingSessions, setCyclingSessions] = useState<Record<string, CyclingSession>>({});
   const [profileWeight, setProfileWeight] = useState<number | null>(null);
-  const [profileBMR, setProfileBMR] = useState<number | null>(null);
+  const [profileTDEEBase, setProfileTDEEBase] = useState<number | null>(null);
+  const [profileCalorieAdjustment, setProfileCalorieAdjustment] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<FilterCategory>('all');
@@ -712,7 +714,7 @@ export default function DisplayWorkout() {
           .order('created_at', { ascending: false }),
         supabase
           .from('profile')
-          .select('weight, height, age, sex')
+          .select('weight, height, age, sex, activity_level, calorie_adjustment')
           .eq('user_id', user.id)
           .maybeSingle(),
       ]);
@@ -721,8 +723,9 @@ export default function DisplayWorkout() {
       setWorkouts(all);
       const p = profileData as any;
       setProfileWeight(p?.weight ?? null);
+      setProfileCalorieAdjustment(p?.calorie_adjustment ?? 0);
       if (p?.weight && p?.height && p?.age && p?.sex) {
-        setProfileBMR(calculateBMR(p.weight, p.height, p.age, p.sex));
+        setProfileTDEEBase(calculateTDEE(calculateBMR(p.weight, p.height, p.age, p.sex), p.activity_level, 0));
       }
 
       const runIds = all.filter(w => w.session_type === 'running').map(w => w.id);
@@ -917,9 +920,9 @@ export default function DisplayWorkout() {
                         {day.toLocaleDateString('en-GB', { month: 'short' })}
                       </p>
 
-                      {/* Total kcal pill (workout + BMR) */}
+                      {/* Total kcal pill (workout + TDEE base + adjustment) */}
                       {(() => {
-                        const total = kcal + (profileBMR ?? 0);
+                        const total = kcal + (profileTDEEBase ?? 0) + profileCalorieAdjustment;
                         return total > 0 ? (
                           <div className={`mt-2 rounded-lg px-2 py-1 text-[10px] font-semibold ${isToday ? 'bg-white/10 text-orange-300' : 'bg-orange-50 text-orange-600 border border-orange-100'}`}>
                             {total.toLocaleString()} kcal

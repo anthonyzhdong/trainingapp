@@ -15,6 +15,7 @@ interface ProfileForm {
   sex: string;
   weight: string;
   activity_level: string;
+  calorie_adjustment: string;
 }
 
 export default function ProfilePage() {
@@ -27,6 +28,7 @@ export default function ProfilePage() {
     sex: '',
     weight: '',
     activity_level: '',
+    calorie_adjustment: '0',
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -43,7 +45,7 @@ export default function ProfilePage() {
       }
       const { data } = await supabase
         .from('profile')
-        .select('first_name, age, height, sex, weight,activity_level')
+        .select('first_name, age, height, sex, weight, activity_level, calorie_adjustment')
         .eq('user_id', user.id)
         .maybeSingle();
       if (data) {
@@ -54,6 +56,7 @@ export default function ProfilePage() {
           sex: data.sex ?? '',
           weight: data.weight != null ? String(data.weight) : '',
           activity_level: data.activity_level ?? '',
+          calorie_adjustment: data.calorie_adjustment != null ? String(data.calorie_adjustment) : '0',
         });
       }
       setLoading(false);
@@ -88,6 +91,7 @@ export default function ProfilePage() {
         sex: form.sex || null,
         weight: form.weight ? parseFloat(form.weight) : null,
         activity_level: form.activity_level || null,
+        calorie_adjustment: form.calorie_adjustment ? parseInt(form.calorie_adjustment) : 0,
       };
 
       const { error: upsertError } = await supabase
@@ -207,6 +211,28 @@ export default function ProfilePage() {
                 <option value="very_active">Very Active – tradesperson, construction</option>
                 <option value="extra_active">Extra Active – very hard physical labour all day</option>
               </select>
+            </div>
+
+            {/* Calorie adjustment */}
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-medium text-gray-700">Daily calorie adjustment (kcal)</label>
+              <input
+                type="number"
+                name="calorie_adjustment"
+                step={50}
+                value={form.calorie_adjustment}
+                onChange={handleChange}
+                placeholder="0"
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+              />
+              <p className="text-xs text-gray-400">
+                {(() => {
+                  const v = parseInt(form.calorie_adjustment) || 0;
+                  if (v < 0) return `${Math.abs(v)} kcal deficit — subtracted from your daily target`;
+                  if (v > 0) return `${v} kcal surplus — added to your daily target`;
+                  return 'No adjustment — calories set to maintenance';
+                })()}
+              </p>
             </div>
 
             {error && <p className="text-sm text-red-600">{error}</p>}
