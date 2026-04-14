@@ -55,9 +55,11 @@ export interface DailyLog {
   user_id: string;
   log_date: string;
   weight: number | null;
-  steps: number | null;
-  calories: number | null;
-  sleep_hours: number | null;
+  sleep: number | null;
+  stress: number | null;
+  motivation: number | null;
+  soreness: number | null;
+  score: number | null;
 }
 
 // Form / submission types
