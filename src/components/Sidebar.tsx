@@ -5,12 +5,13 @@ import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 
 const navItems = [
+  { label: 'Dashboard', href: '/dashboard' },
   { label: 'Add Workout', href: '/workout' },
   { label: 'My Workouts', href: '/displayworkout' },
   { label: 'Daily Log', href: '/daily-log' },
   { label: 'History', href: '/history' },
   { label: 'Profile', href: '/profile' },
-  { label: 'Dashboard', href: '/dashboard' },
+  
 ];
 
 export default function Sidebar() {
