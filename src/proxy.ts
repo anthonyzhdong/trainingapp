@@ -2,7 +2,7 @@ import { createServerClient } from '@supabase/ssr';
 import { NextRequest, NextResponse } from 'next/server';
 
 // add routes e.g. protected routes need login, public routes are for unauthenticated users
-const protectedRoutes = ['/dashboard'];
+const protectedRoutes = ['/dashboard', '/workout', '/displayworkout', '/daily-log', '/history', '/profile'];
 const publicRoutes = ['/login', '/'];
 
 export async function proxy(req: NextRequest) {
@@ -34,7 +34,7 @@ export async function proxy(req: NextRequest) {
     return NextResponse.redirect(new URL('/login', req.nextUrl));
   }
 
-  if (isPublicRoute && user && !path.startsWith('/dashboard')) {
+  if (isPublicRoute && user) {
     return NextResponse.redirect(new URL('/dashboard', req.nextUrl));
   }
 
