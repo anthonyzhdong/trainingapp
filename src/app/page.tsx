@@ -1,6 +1,8 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
+import runningImage from '@/images/runningimage.jpg';
 
 /* ── Architectural vertical grid lines ── */
 function GridLines() {
@@ -112,25 +114,32 @@ export default function LandingPage() {
         </div>
 
         {/* Right — editorial image block */}
-        <div className="md:col-span-5 relative min-h-[70vw] md:min-h-0">
-          <div className="absolute inset-0 bg-gradient-to-br from-[#252525] to-[#0C0C0C] shadow-[0_8px_32px_rgba(0,0,0,0.2)]">
-            {/* Vignette */}
-            <div className="absolute inset-0 bg-gradient-to-t from-[#0C0C0C]/60 via-transparent to-transparent" />
+        <div className="md:col-span-5 relative min-h-[70vw] md:min-h-0 overflow-hidden group">
+          {/* Photo — grayscale by default, slow colour reveal on hover */}
+          <Image
+            src={runningImage}
+            alt="Elite athlete in motion"
+            fill
+            priority
+            className="object-cover grayscale transition-[filter,transform] duration-[2000ms] ease-out group-hover:grayscale-0 group-hover:scale-105"
+          />
 
-            {/* Bottom caption strip */}
-            <div className="absolute bottom-8 left-8 right-8">
-              <div className="h-px w-full bg-white/10 mb-4" />
-              <div className="flex justify-between items-center">
-                <span className="text-[9px] tracking-[0.25em] text-white/25 uppercase font-medium">
-                  Athlete / Sprint Protocol
-                </span>
-                <span className="text-[9px] tracking-[0.2em] text-white/25 font-medium">001</span>
-              </div>
+          {/* Vignette — darkens bottom so caption is always legible */}
+          <div className="absolute inset-0 bg-gradient-to-t from-[#0C0C0C]/70 via-transparent to-transparent pointer-events-none" />
+
+          {/* Bottom caption strip */}
+          <div className="absolute bottom-8 left-8 right-8 z-10">
+            <div className="h-px w-full bg-white/10 mb-4" />
+            <div className="flex justify-between items-center">
+              <span className="text-[9px] tracking-[0.25em] text-white/35 uppercase font-medium">
+                Athlete / Sprint Protocol
+              </span>
+              <span className="text-[9px] tracking-[0.2em] text-white/35 font-medium">001</span>
             </div>
-
-            {/* Decorative inner border */}
-            <div className="absolute inset-4 border border-white/5" />
           </div>
+
+          {/* Decorative inner border — subtle frame */}
+          <div className="absolute inset-4 border border-white/[0.06] pointer-events-none z-10" />
         </div>
       </section>
 

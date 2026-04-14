@@ -18,7 +18,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "ATHLÈTE — Elite Performance Tracking",
+  title: "PROCESS — Elite Performance Tracking",
   description: "Precision training analytics for athletes who demand more.",
 };
 
