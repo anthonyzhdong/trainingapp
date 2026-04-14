@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 
 const navItems = [
   { label: 'Add Workout', href: '/workout' },
+  { label: 'My Workouts', href: '/displayworkout' },
   { label: 'Daily Log', href: '/daily-log' },
   { label: 'History', href: '/history' },
   { label: 'Profile', href: '/profile' },
