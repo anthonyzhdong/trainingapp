@@ -40,6 +40,7 @@ create table workouts (
     duration integer not null,
     rpe numeric,
     session_type text not null,  -- 'lifting' | 'running' | 'cycling'
+    status text,
     created_at timestamptz default now()
 );
 
