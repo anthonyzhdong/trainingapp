@@ -10,11 +10,12 @@ import {
   calculateWorkoutKcal,
   calculateRunningKcal,
   calculateCyclingKcal,
+  calculateSwimmingKcal,
 } from '@/lib/calories';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type SessionType = 'lifting' | 'running' | 'cycling';
+type SessionType = 'lifting' | 'running' | 'cycling' | 'swimming';
 
 interface Workout {
   id: string;
@@ -60,6 +61,23 @@ interface CyclingSessionFull {
   notes: string | null;
 }
 
+interface SwimmingSession {
+  workout_id: string;
+  distance: number;
+  swim_type: string;
+}
+
+interface SwimmingSessionFull {
+  distance: number;
+  swim_type: string;
+  avg_pace: number | null;
+  avg_heart_rate: number | null;
+  max_heart_rate: number | null;
+  stroke_type: string | null;
+  pool_length: number | null;
+  notes: string | null;
+}
+
 interface ExerciseEntry {
   name: string;
   sets: { reps: number; weight: number }[];
@@ -78,6 +96,8 @@ interface DailyLog {
 
 const RUN_TYPES = ['easy', 'tempo', 'interval', 'long', 'race'] as const;
 const CYCLE_TYPES = ['easy', 'endurance', 'tempo', 'interval', 'climb', 'race'] as const;
+const SWIM_TYPES = ['easy', 'tempo', 'interval', 'sprint', 'race'] as const;
+const STROKE_TYPES = ['freestyle', 'backstroke', 'breaststroke', 'butterfly', 'mixed'] as const;
 const RPE_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
 const DAY_LABELS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'] as const;
 
@@ -85,18 +105,21 @@ const CATEGORY_COLORS: Record<SessionType, string> = {
   lifting: 'bg-blue-100 text-blue-700 border-blue-200',
   running: 'bg-green-100 text-green-700 border-green-200',
   cycling: 'bg-orange-100 text-orange-700 border-orange-200',
+  swimming: 'bg-cyan-100 text-cyan-700 border-cyan-200',
 };
 
 const CATEGORY_DOT: Record<SessionType, string> = {
   lifting: 'bg-blue-500',
   running: 'bg-green-500',
   cycling: 'bg-orange-500',
+  swimming: 'bg-cyan-500',
 };
 
 const CATEGORY_LABELS: Record<SessionType, string> = {
   lifting: 'Lifting',
   running: 'Running',
   cycling: 'Cycling',
+  swimming: 'Swimming',
 };
 
 const SLEEP_LABELS = ['Terrible', 'Poor', 'Fair', 'Good', 'Excellent'];
@@ -166,6 +189,7 @@ function workoutSubtitle(
   w: Workout,
   runningSessions: Record<string, RunningSession>,
   cyclingSessions: Record<string, CyclingSession>,
+  swimmingSessions: Record<string, SwimmingSession>,
 ): string {
   if (w.session_type === 'running') {
     const rs = runningSessions[w.id];
@@ -175,6 +199,10 @@ function workoutSubtitle(
     const cs = cyclingSessions[w.id];
     if (cs) return `${cs.distance % 1 === 0 ? cs.distance : cs.distance.toFixed(1)} km · ${cs.ride_type}`;
   }
+  if (w.session_type === 'swimming') {
+    const ss = swimmingSessions[w.id];
+    if (ss) return `${ss.distance % 1 === 0 ? ss.distance : ss.distance.toFixed(1)} km · ${ss.swim_type}`;
+  }
   return w.duration ? formatDuration(w.duration) : '';
 }
 
@@ -182,6 +210,7 @@ function calcDayKcal(
   dayWorkouts: Workout[],
   runningSessions: Record<string, RunningSession>,
   cyclingSessions: Record<string, CyclingSession>,
+  swimmingSessions: Record<string, SwimmingSession>,
   profileWeight: number | null,
 ): number {
   let total = 0;
@@ -197,6 +226,13 @@ function calcDayKcal(
       const cs = cyclingSessions[w.id];
       if (cs && profileWeight) {
         total += calculateCyclingKcal(cs.distance, profileWeight, cs.elevation_gain ?? 0, cs.avg_power, w.duration);
+      } else {
+        total += calculateWorkoutKcal([{ duration: w.duration, rpe: w.rpe }]);
+      }
+    } else if (w.session_type === 'swimming') {
+      const ss = swimmingSessions[w.id];
+      if (ss && profileWeight) {
+        total += calculateSwimmingKcal(ss.distance, profileWeight);
       } else {
         total += calculateWorkoutKcal([{ duration: w.duration, rpe: w.rpe }]);
       }
@@ -276,6 +312,7 @@ const FILTER_OPTIONS: { label: string; value: FilterCategory }[] = [
   { label: 'Lifting', value: 'lifting' },
   { label: 'Running', value: 'running' },
   { label: 'Cycling', value: 'cycling' },
+  { label: 'Swimming', value: 'swimming' },
 ];
 
 // ── EditOverlay ────────────────────────────────────────────────────────────────
@@ -315,9 +352,26 @@ function EditOverlay({ workout, onClose, onSaved }: EditOverlayProps) {
   const [cycleRpe, setCycleRpe] = useState('');
   const [cycleNotes, setCycleNotes] = useState('');
 
+  const [swimDistance, setSwimDistance] = useState('');
+  const [swimType, setSwimType] = useState<string>('easy');
+  const [strokeType, setStrokeType] = useState<string>('freestyle');
+  const [swimAvgHR, setSwimAvgHR] = useState('');
+  const [swimMaxHR, setSwimMaxHR] = useState('');
+  const [swimPoolLength, setSwimPoolLength] = useState<'25' | '50' | ''>('');
+  const [swimRpe, setSwimRpe] = useState('');
+  const [swimNotes, setSwimNotes] = useState('');
+
   const durationNum = parseFloat(duration) || 0;
   const runPace = computePace(parseFloat(runDistance) || 0, durationNum);
   const cycleSpeed = computeSpeed(parseFloat(cycleDistance) || 0, durationNum);
+  const swimPace = (() => {
+    const d = parseFloat(swimDistance) || 0;
+    if (!d || !durationNum) return null;
+    const secondsPer100m = (durationNum * 60) / (d * 10);
+    const mins = Math.floor(secondsPer100m / 60);
+    const secs = Math.round(secondsPer100m % 60);
+    return `${mins}:${secs < 10 ? '0' : ''}${secs} /100m`;
+  })();
 
   useEffect(() => {
     const supabase = createClient();
@@ -356,6 +410,23 @@ function EditOverlay({ workout, onClose, onSaved }: EditOverlayProps) {
           setCycleNotes(cs.notes ?? '');
         }
         setCycleRpe(workout.rpe != null ? String(workout.rpe) : '');
+      } else if (workout.session_type === 'swimming') {
+        const { data } = await supabase
+          .from('swimming_sessions')
+          .select('distance, swim_type, avg_heart_rate, max_heart_rate, stroke_type, pool_length, notes')
+          .eq('workout_id', workout.id)
+          .maybeSingle();
+        if (data) {
+          const ss = data as SwimmingSessionFull;
+          setSwimDistance(String(ss.distance));
+          setSwimType(ss.swim_type);
+          setSwimAvgHR(ss.avg_heart_rate != null ? String(ss.avg_heart_rate) : '');
+          setSwimMaxHR(ss.max_heart_rate != null ? String(ss.max_heart_rate) : '');
+          setStrokeType(ss.stroke_type ?? 'freestyle');
+          setSwimPoolLength(ss.pool_length != null ? (String(ss.pool_length) as '25' | '50') : '');
+          setSwimNotes(ss.notes ?? '');
+        }
+        setSwimRpe(workout.rpe != null ? String(workout.rpe) : '');
       } else {
         const { data: weData } = await supabase
           .from('workout_exercises')
@@ -445,6 +516,29 @@ function EditOverlay({ workout, onClose, onSaved }: EditOverlayProps) {
           notes: cycleNotes || null,
         }).eq('workout_id', workout.id);
         if (sErr) { setError(sErr.message); return; }
+      } else if (workout.session_type === 'swimming') {
+        const distKm = parseFloat(swimDistance) || 0;
+        const avgPace = durationSeconds > 0 && distKm > 0
+          ? Math.round(durationSeconds / (distKm * 10))
+          : null;
+        const { error: wErr } = await supabase.from('workouts').update({
+          name: name.trim() || workout.name,
+          duration: durationSeconds,
+          rpe: swimRpe ? parseFloat(swimRpe) : null,
+          created_at: new Date(workoutDate).toISOString(),
+        }).eq('id', workout.id);
+        if (wErr) { setError(wErr.message); return; }
+        const { error: sErr } = await supabase.from('swimming_sessions').update({
+          distance: distKm,
+          swim_type: swimType,
+          avg_pace: avgPace,
+          avg_heart_rate: swimAvgHR ? parseInt(swimAvgHR) : null,
+          max_heart_rate: swimMaxHR ? parseInt(swimMaxHR) : null,
+          stroke_type: strokeType || null,
+          pool_length: swimPoolLength ? parseInt(swimPoolLength) : null,
+          notes: swimNotes || null,
+        }).eq('workout_id', workout.id);
+        if (sErr) { setError(sErr.message); return; }
       } else {
         const { error: wErr } = await supabase.from('workouts').update({
           name: name.trim() || workout.name,
@@ -490,7 +584,9 @@ function EditOverlay({ workout, onClose, onSaved }: EditOverlayProps) {
             ? liftingRpe ? parseFloat(liftingRpe) : null
             : workout.session_type === 'running'
               ? runRpe ? parseFloat(runRpe) : null
-              : cycleRpe ? parseFloat(cycleRpe) : null,
+              : workout.session_type === 'cycling'
+                ? cycleRpe ? parseFloat(cycleRpe) : null
+                : swimRpe ? parseFloat(swimRpe) : null,
         created_at: new Date(workoutDate).toISOString(),
       });
     } finally {
@@ -662,6 +758,64 @@ function EditOverlay({ workout, onClose, onSaved }: EditOverlayProps) {
                 </>
               )}
 
+              {workout.session_type === 'swimming' && (
+                <>
+                  <div className={cardCls}>
+                    <p className={sectionLabelCls}>Distance & pace</p>
+                    <input type="number" min={0} step={0.01} value={swimDistance} onChange={e => setSwimDistance(e.target.value)} placeholder="0.00 km" className={`${inputCls} text-2xl font-bold tracking-tight`} style={{ fontFamily: 'Georgia, serif' }} />
+                    {swimPace && (
+                      <div className="flex items-center justify-between bg-[#FDF1EA] border border-[#ECD5C5] rounded-xl px-4 py-3">
+                        <span className="text-[10px] font-semibold uppercase tracking-widest text-[#C4622A]">Avg pace</span>
+                        <span className="text-xl font-bold text-[#C4622A]" style={{ fontFamily: 'Georgia, serif' }}>{swimPace}</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className={cardCls}>
+                    <p className={sectionLabelCls}>Swim type</p>
+                    <div className="flex flex-wrap gap-2">
+                      {SWIM_TYPES.map(t => (
+                        <button key={t} type="button" onClick={() => setSwimType(t)} className={`px-4 py-1.5 rounded-full border text-sm font-semibold capitalize transition-all ${swimType === t ? 'bg-[#C4622A] border-[#C4622A] text-white' : 'bg-white border-[#EDE5DB] text-[#9B8575] hover:border-[#C4622A] hover:text-[#C4622A]'}`}>{t}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className={cardCls}>
+                    <p className={sectionLabelCls}>Stroke</p>
+                    <div className="flex flex-wrap gap-2">
+                      {STROKE_TYPES.map(t => (
+                        <button key={t} type="button" onClick={() => setStrokeType(t)} className={`px-4 py-1.5 rounded-full border text-sm font-semibold capitalize transition-all ${strokeType === t ? 'bg-[#C4622A] border-[#C4622A] text-white' : 'bg-white border-[#EDE5DB] text-[#9B8575] hover:border-[#C4622A] hover:text-[#C4622A]'}`}>{t}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className={cardCls}>
+                    <p className={sectionLabelCls}>Heart rate & pool</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="flex flex-col gap-1.5"><label className={fieldLabelCls}>Avg HR (bpm)</label><input type="number" min={0} value={swimAvgHR} onChange={e => setSwimAvgHR(e.target.value)} placeholder="145" className={inputCls} /></div>
+                      <div className="flex flex-col gap-1.5"><label className={fieldLabelCls}>Max HR (bpm)</label><input type="number" min={0} value={swimMaxHR} onChange={e => setSwimMaxHR(e.target.value)} placeholder="170" className={inputCls} /></div>
+                      <div className="flex flex-col gap-1.5 col-span-2">
+                        <label className={fieldLabelCls}>Pool length (m)</label>
+                        <div className="flex gap-2">
+                          {(['25', '50', ''] as const).map(len => (
+                            <button key={len} type="button" onClick={() => setSwimPoolLength(len)} className={`px-4 py-1.5 rounded-full border text-sm font-semibold transition-all ${swimPoolLength === len ? 'bg-[#C4622A] border-[#C4622A] text-white' : 'bg-white border-[#EDE5DB] text-[#9B8575] hover:border-[#C4622A] hover:text-[#C4622A]'}`}>{len === '' ? 'Open water' : `${len}m`}</button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className={cardCls}>
+                    <p className={sectionLabelCls}>Perceived effort (RPE)</p>
+                    <div className="flex gap-1.5">
+                      {RPE_VALUES.map(v => (
+                        <button key={v} type="button" onClick={() => setSwimRpe(String(v))} className={`flex-1 h-9 rounded-lg border text-xs font-semibold transition-all ${swimRpe === String(v) ? 'bg-[#C4622A] border-[#C4622A] text-white' : 'bg-white border-[#EDE5DB] text-[#9B8575] hover:border-[#C4622A] hover:text-[#C4622A]'}`}>{v}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className={fieldLabelCls}>Notes <span className="text-[#CCC1B5] font-normal">(optional)</span></label>
+                    <textarea value={swimNotes} onChange={e => setSwimNotes(e.target.value)} rows={3} placeholder="How did it feel?" className={`${inputCls} resize-none`} />
+                  </div>
+                </>
+              )}
+
               <div className="flex flex-col gap-1.5">
                 <label className={fieldLabelCls}>Date & Time</label>
                 <input type="datetime-local" value={workoutDate} onChange={e => setWorkoutDate(e.target.value)} className={inputCls} />
@@ -688,18 +842,24 @@ interface WorkoutCardProps {
   workout: Workout;
   runningSessions: Record<string, RunningSession>;
   cyclingSessions: Record<string, CyclingSession>;
+  swimmingSessions: Record<string, SwimmingSession>;
   profileWeight: number | null;
   onEdit: (w: Workout) => void;
   onDelete: (id: string) => void;
+  onView: (w: Workout) => void;
+  isSelected: boolean;
 }
 
-function WorkoutCard({ workout: w, runningSessions, cyclingSessions, profileWeight, onEdit, onDelete }: WorkoutCardProps) {
+function WorkoutCard({ workout: w, runningSessions, cyclingSessions, swimmingSessions, profileWeight, onEdit, onDelete, onView, isSelected }: WorkoutCardProps) {
   const [confirming, setConfirming] = useState(false);
-  const subtitle = workoutSubtitle(w, runningSessions, cyclingSessions);
-  const kcal = calcDayKcal([w], runningSessions, cyclingSessions, profileWeight);
+  const subtitle = workoutSubtitle(w, runningSessions, cyclingSessions, swimmingSessions);
+  const kcal = calcDayKcal([w], runningSessions, cyclingSessions, swimmingSessions, profileWeight);
 
   return (
-    <div className="bg-white rounded-xl border border-[#EDE5DB] p-3 flex flex-col gap-2 hover:shadow-md transition-shadow">
+    <div
+      onClick={() => onView(w)}
+      className={`bg-white rounded-xl border p-3 flex flex-col gap-2 cursor-pointer transition-shadow ${isSelected ? 'border-[#1C1612] shadow-md' : 'border-[#EDE5DB] hover:shadow-md'}`}
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
           <h3 className="text-[12.5px] font-bold text-[#1C1612] leading-tight truncate tracking-[-0.2px]">{w.name}</h3>
@@ -724,26 +884,285 @@ function WorkoutCard({ workout: w, runningSessions, cyclingSessions, profileWeig
 
       <div className="flex gap-1.5 pt-1.5 border-t border-gray-100">
         <button
-          onClick={() => onEdit(w)}
+          onClick={e => { e.stopPropagation(); onEdit(w); }}
           className="flex-1 flex items-center justify-center gap-1 rounded-lg border border-[#EDE5DB] py-1.5 text-[11px] font-medium text-gray-600 hover:bg-gray-50 transition-colors"
         >
           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
           Edit
         </button>
         {confirming ? (
-          <div className="flex-1 flex gap-1">
+          <div className="flex-1 flex gap-1" onClick={e => e.stopPropagation()}>
             <button onClick={() => setConfirming(false)} className="flex-1 rounded-lg border border-[#EDE5DB] py-1.5 text-[11px] font-medium text-gray-500 hover:bg-gray-50 transition-colors">No</button>
             <button onClick={() => onDelete(w.id)} className="flex-1 rounded-lg bg-red-500 py-1.5 text-[11px] font-medium text-white hover:bg-red-600 transition-colors">Yes</button>
           </div>
         ) : (
           <button
-            onClick={() => setConfirming(true)}
+            onClick={e => { e.stopPropagation(); setConfirming(true); }}
             className="flex-1 flex items-center justify-center gap-1 rounded-lg border border-red-100 py-1.5 text-[11px] font-medium text-red-500 hover:bg-red-50 transition-colors"
           >
             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
             Delete
           </button>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ── WorkoutDetailPanel ─────────────────────────────────────────────────────────
+
+interface WorkoutDetailPanelProps {
+  workout: Workout;
+  runningSessions: Record<string, RunningSession>;
+  cyclingSessions: Record<string, CyclingSession>;
+  swimmingSessions: Record<string, SwimmingSession>;
+  profileWeight: number | null;
+  onClose: () => void;
+}
+
+interface DetailExercise {
+  name: string;
+  sets: { set_number: number; reps: number; weight: number }[];
+}
+
+function StatCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="bg-[#FAF7F2] rounded-xl p-3">
+      <p className="text-[9.5px] font-bold uppercase tracking-wide text-[#9B8575] mb-0.5">{label}</p>
+      <p className="text-[13px] font-bold text-[#1C1612] capitalize">{value}</p>
+    </div>
+  );
+}
+
+function WorkoutDetailPanel({ workout, runningSessions, cyclingSessions, swimmingSessions, profileWeight, onClose }: WorkoutDetailPanelProps) {
+  const [loadingDetails, setLoadingDetails] = useState(true);
+  const [exercises, setExercises] = useState<DetailExercise[]>([]);
+  const [runDetail, setRunDetail] = useState<RunningSessionFull | null>(null);
+  const [cycleDetail, setCycleDetail] = useState<CyclingSessionFull | null>(null);
+  const [swimDetail, setSwimDetail] = useState<SwimmingSessionFull | null>(null);
+
+  const kcal = calcDayKcal([workout], runningSessions, cyclingSessions, swimmingSessions, profileWeight);
+
+  useEffect(() => {
+    const supabase = createClient();
+    setLoadingDetails(true);
+    setExercises([]);
+    setRunDetail(null);
+    setCycleDetail(null);
+
+    async function load() {
+      if (workout.session_type === 'lifting') {
+        const { data } = await supabase
+          .from('workout_exercises')
+          .select('exercise_order, exercises(name), workout_sets(set_number, reps, weight)')
+          .eq('workout_id', workout.id)
+          .order('exercise_order', { ascending: true });
+        if (data) {
+          setExercises(
+            (data as any[]).map(we => ({
+              name: we.exercises?.name ?? '',
+              sets: (we.workout_sets ?? []).sort((a: any, b: any) => a.set_number - b.set_number),
+            })),
+          );
+        }
+      } else if (workout.session_type === 'running') {
+        const { data } = await supabase
+          .from('running_sessions')
+          .select('distance, run_type, elevation_gain, avg_heart_rate, max_heart_rate, notes')
+          .eq('workout_id', workout.id)
+          .maybeSingle();
+        setRunDetail(data as RunningSessionFull | null);
+      } else if (workout.session_type === 'cycling') {
+        const { data } = await supabase
+          .from('cycling_sessions')
+          .select('distance, ride_type, elevation_gain, avg_power, avg_heart_rate, max_heart_rate, avg_cadence, notes')
+          .eq('workout_id', workout.id)
+          .maybeSingle();
+        setCycleDetail(data as CyclingSessionFull | null);
+      } else if (workout.session_type === 'swimming') {
+        const { data } = await supabase
+          .from('swimming_sessions')
+          .select('distance, swim_type, avg_pace, avg_heart_rate, max_heart_rate, stroke_type, pool_length, notes')
+          .eq('workout_id', workout.id)
+          .maybeSingle();
+        setSwimDetail(data as SwimmingSessionFull | null);
+      }
+      setLoadingDetails(false);
+    }
+    load();
+  }, [workout.id, workout.session_type]);
+
+  const workoutDate = new Date(workout.created_at);
+
+  return (
+    <div className="w-[280px] shrink-0 border-l border-[#EDE5DB] bg-white flex flex-col overflow-hidden h-screen">
+      {/* Header */}
+      <div className="px-5 pt-5 pb-4 border-b border-[#EDE5DB] shrink-0">
+        <div className="flex items-center justify-between gap-2 mb-2.5">
+          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${CATEGORY_COLORS[workout.session_type]}`}>
+            {CATEGORY_LABELS[workout.session_type]}
+          </span>
+          <button
+            onClick={onClose}
+            className="w-6 h-6 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <h2 className="text-[15px] font-bold text-[#1C1612] tracking-[-0.3px] leading-tight">{workout.name}</h2>
+        <p className="text-[11px] text-gray-400 mt-1">
+          {workoutDate.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+          {workout.duration > 0 && ` · ${formatDuration(workout.duration)}`}
+        </p>
+        {(workout.rpe != null || kcal > 0) && (
+          <div className="flex gap-4 mt-3">
+            {workout.rpe != null && (
+              <div>
+                <div className="text-[20px] font-bold text-[#1C1612] leading-none tracking-[-1px]">{workout.rpe}</div>
+                <div className="text-[9px] text-[#9B8575] mt-0.5 uppercase tracking-wide font-semibold">RPE</div>
+              </div>
+            )}
+            {kcal > 0 && (
+              <div>
+                <div className="text-[20px] font-bold text-[#C4622A] leading-none tracking-[-1px]">{kcal.toLocaleString()}</div>
+                <div className="text-[9px] text-[#9B8575] mt-0.5 uppercase tracking-wide font-semibold">kcal</div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Body */}
+      <div className="flex-1 overflow-y-auto px-5 py-4">
+        {loadingDetails ? (
+          <p className="text-[12px] text-gray-400">Loading…</p>
+        ) : workout.session_type === 'lifting' ? (
+          exercises.length === 0 ? (
+            <p className="text-[12px] text-gray-400">No exercises recorded.</p>
+          ) : (
+            <div className="flex flex-col gap-5">
+              {exercises.map((ex, i) => (
+                <div key={i}>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#9B8575] mb-2">{ex.name || `Exercise ${i + 1}`}</p>
+                  <div className="flex flex-col gap-1">
+                    <div className="flex text-[9.5px] font-bold uppercase tracking-wide text-[#9B8575] px-1 mb-0.5 gap-2">
+                      <span className="w-5 text-center">#</span>
+                      <span className="flex-1">Reps</span>
+                      <span className="w-16 text-right">Weight</span>
+                    </div>
+                    {ex.sets.map((s, si) => (
+                      <div key={si} className="flex items-center gap-2 bg-[#FAF7F2] rounded-lg px-3 py-2">
+                        <span className="w-5 text-center text-[10px] font-bold text-[#9B8575]">{si + 1}</span>
+                        <span className="flex-1 text-[13px] font-semibold text-[#1C1612]">{s.reps} reps</span>
+                        <span className="w-16 text-right text-[13px] font-semibold text-[#9B8575]">{s.weight} kg</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        ) : workout.session_type === 'running' ? (
+          !runDetail ? (
+            <p className="text-[12px] text-gray-400">No details recorded.</p>
+          ) : (
+            <div className="flex flex-col gap-3">
+              <div className="grid grid-cols-2 gap-2">
+                <StatCell label="Distance" value={`${runDetail.distance} km`} />
+                <StatCell label="Type" value={runDetail.run_type} />
+                {workout.duration > 0 && (
+                  <StatCell label="Pace" value={computePace(runDetail.distance, workout.duration / 60) ?? '—'} />
+                )}
+                {runDetail.elevation_gain != null && (
+                  <StatCell label="Elevation" value={`${runDetail.elevation_gain} m`} />
+                )}
+                {runDetail.avg_heart_rate != null && (
+                  <StatCell label="Avg HR" value={`${runDetail.avg_heart_rate} bpm`} />
+                )}
+                {runDetail.max_heart_rate != null && (
+                  <StatCell label="Max HR" value={`${runDetail.max_heart_rate} bpm`} />
+                )}
+              </div>
+              {runDetail.notes && (
+                <div>
+                  <p className="text-[9.5px] font-bold uppercase tracking-widest text-[#9B8575] mb-1.5">Notes</p>
+                  <p className="text-[12px] text-[#1C1612] bg-[#FAF7F2] rounded-xl p-3 leading-relaxed">{runDetail.notes}</p>
+                </div>
+              )}
+            </div>
+          )
+        ) : workout.session_type === 'cycling' ? (
+          !cycleDetail ? (
+            <p className="text-[12px] text-gray-400">No details recorded.</p>
+          ) : (
+            <div className="flex flex-col gap-3">
+              <div className="grid grid-cols-2 gap-2">
+                <StatCell label="Distance" value={`${cycleDetail.distance} km`} />
+                <StatCell label="Type" value={cycleDetail.ride_type} />
+                {workout.duration > 0 && (
+                  <StatCell label="Speed" value={computeSpeed(cycleDetail.distance, workout.duration / 60) ?? '—'} />
+                )}
+                {cycleDetail.elevation_gain != null && (
+                  <StatCell label="Elevation" value={`${cycleDetail.elevation_gain} m`} />
+                )}
+                {cycleDetail.avg_power != null && (
+                  <StatCell label="Avg Power" value={`${cycleDetail.avg_power} W`} />
+                )}
+                {cycleDetail.avg_heart_rate != null && (
+                  <StatCell label="Avg HR" value={`${cycleDetail.avg_heart_rate} bpm`} />
+                )}
+                {cycleDetail.max_heart_rate != null && (
+                  <StatCell label="Max HR" value={`${cycleDetail.max_heart_rate} bpm`} />
+                )}
+                {cycleDetail.avg_cadence != null && (
+                  <StatCell label="Cadence" value={`${cycleDetail.avg_cadence} rpm`} />
+                )}
+              </div>
+              {cycleDetail.notes && (
+                <div>
+                  <p className="text-[9.5px] font-bold uppercase tracking-widest text-[#9B8575] mb-1.5">Notes</p>
+                  <p className="text-[12px] text-[#1C1612] bg-[#FAF7F2] rounded-xl p-3 leading-relaxed">{cycleDetail.notes}</p>
+                </div>
+              )}
+            </div>
+          )
+        ) : workout.session_type === 'swimming' ? (
+          !swimDetail ? (
+            <p className="text-[12px] text-gray-400">No details recorded.</p>
+          ) : (
+            <div className="flex flex-col gap-3">
+              <div className="grid grid-cols-2 gap-2">
+                <StatCell label="Distance" value={`${swimDetail.distance} km`} />
+                <StatCell label="Type" value={swimDetail.swim_type} />
+                {swimDetail.avg_pace != null && (
+                  <StatCell label="Avg Pace" value={(() => {
+                    const mins = Math.floor(swimDetail.avg_pace / 60);
+                    const secs = swimDetail.avg_pace % 60;
+                    return `${mins}:${secs < 10 ? '0' : ''}${secs} /100m`;
+                  })()} />
+                )}
+                {swimDetail.stroke_type && (
+                  <StatCell label="Stroke" value={swimDetail.stroke_type} />
+                )}
+                {swimDetail.pool_length != null && (
+                  <StatCell label="Pool" value={`${swimDetail.pool_length}m`} />
+                )}
+                {swimDetail.avg_heart_rate != null && (
+                  <StatCell label="Avg HR" value={`${swimDetail.avg_heart_rate} bpm`} />
+                )}
+                {swimDetail.max_heart_rate != null && (
+                  <StatCell label="Max HR" value={`${swimDetail.max_heart_rate} bpm`} />
+                )}
+              </div>
+              {swimDetail.notes && (
+                <div>
+                  <p className="text-[9.5px] font-bold uppercase tracking-widest text-[#9B8575] mb-1.5">Notes</p>
+                  <p className="text-[12px] text-[#1C1612] bg-[#FAF7F2] rounded-xl p-3 leading-relaxed">{swimDetail.notes}</p>
+                </div>
+              )}
+            </div>
+          )
+        ) : null}
       </div>
     </div>
   );
@@ -760,6 +1179,7 @@ export default function Dashboard() {
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [runningSessions, setRunningSessions] = useState<Record<string, RunningSession>>({});
   const [cyclingSessions, setCyclingSessions] = useState<Record<string, CyclingSession>>({});
+  const [swimmingSessions, setSwimmingSessions] = useState<Record<string, SwimmingSession>>({});
   const [profileWeight, setProfileWeight] = useState<number | null>(null);
   const [profileTDEEBase, setProfileTDEEBase] = useState<number | null>(null);
   const [profileCalorieAdjustment, setProfileCalorieAdjustment] = useState<number>(0);
@@ -767,6 +1187,7 @@ export default function Dashboard() {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<FilterCategory>('all');
   const [editTarget, setEditTarget] = useState<Workout | null>(null);
+  const [detailWorkout, setDetailWorkout] = useState<Workout | null>(null);
   const [weekOffset, setWeekOffset] = useState(0);
   const [selectedDayIdx, setSelectedDayIdx] = useState(todayDowIdx);
   const [dailyLogs, setDailyLogs] = useState<Record<string, DailyLog>>({});
@@ -801,6 +1222,7 @@ export default function Dashboard() {
 
       const runIds = all.filter(w => w.session_type === 'running').map(w => w.id);
       const cycleIds = all.filter(w => w.session_type === 'cycling').map(w => w.id);
+      const swimIds = all.filter(w => w.session_type === 'swimming').map(w => w.id);
 
       await Promise.all([
         runIds.length > 0
@@ -821,6 +1243,16 @@ export default function Dashboard() {
                 const map: Record<string, CyclingSession> = {};
                 for (const r of data ?? []) map[r.workout_id] = r as CyclingSession;
                 setCyclingSessions(map);
+              })
+          : Promise.resolve(),
+        swimIds.length > 0
+          ? supabase.from('swimming_sessions')
+              .select('workout_id, distance, swim_type')
+              .in('workout_id', swimIds)
+              .then(({ data }) => {
+                const map: Record<string, SwimmingSession> = {};
+                for (const r of data ?? []) map[r.workout_id] = r as SwimmingSession;
+                setSwimmingSessions(map);
               })
           : Promise.resolve(),
       ]);
@@ -894,7 +1326,7 @@ export default function Dashboard() {
   const readinessTier = readinessScore !== null ? getReadinessTier(readinessScore) : null;
   const selectedDayLabel = selectedDay.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' });
   const selectedDayWorkouts = byDay[toDateKey(selectedDay)] ?? [];
-  const selectedDayWorkoutKcal = calcDayKcal(selectedDayWorkouts, runningSessions, cyclingSessions, profileWeight);
+  const selectedDayWorkoutKcal = calcDayKcal(selectedDayWorkouts, runningSessions, cyclingSessions, swimmingSessions, profileWeight);
   const selectedDayTotalKcal = selectedDayWorkoutKcal + (profileTDEEBase ?? 0) + profileCalorieAdjustment;
 
   // Last 14 days for streak grid
@@ -932,6 +1364,15 @@ export default function Dashboard() {
         .then(({ data }) => {
           if (data) setCyclingSessions(prev => ({ ...prev, [updated.id]: data as CyclingSession }));
         });
+    } else if (updated.session_type === 'swimming') {
+      createClient()
+        .from('swimming_sessions')
+        .select('workout_id, distance, swim_type')
+        .eq('workout_id', updated.id)
+        .maybeSingle()
+        .then(({ data }) => {
+          if (data) setSwimmingSessions(prev => ({ ...prev, [updated.id]: data as SwimmingSession }));
+        });
     }
     setEditTarget(null);
   }
@@ -953,35 +1394,43 @@ export default function Dashboard() {
                 <p className="text-[12.5px] text-gray-500 mt-0.5">{workouts.length} total · {weekWorkoutCount} this week</p>
               </div>
             </div>
-            <div className="flex gap-2.5 items-center">
-              {/* Search */}
-              <div className="relative flex-1 max-w-[260px]">
-                <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <circle cx="11" cy="11" r="8" strokeWidth="2" /><line x1="21" y1="21" x2="16.65" y2="16.65" strokeWidth="2" strokeLinecap="round" />
-                </svg>
-                <input
-                  type="text"
-                  placeholder="Search by name…"
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  className="w-full pl-8 pr-3 py-[7px] rounded-xl border border-gray-200 bg-white text-[13px] text-[#1C1612] placeholder-gray-400 focus:outline-none focus:border-gray-400 shadow-sm"
-                />
+            {/* Stat boxes */}
+            <div className="flex gap-3 mb-4">
+              
+              {/* Readiness */}
+              <div className="flex-1 bg-white border border-[#EDE5DB] rounded-2xl px-4 py-3 flex items-center gap-3 min-w-0">
+                <div>
+                  <p className="text-[9.5px] font-bold uppercase tracking-[0.8px] text-[#9B8575] mb-0.5">Readiness</p>
+                  {readinessScore !== null && readinessTier ? (
+                    <>
+                      <div className={`text-[28px] font-bold leading-none tracking-[-2px] ${readinessTier.textColor}`}>{readinessScore}</div>
+                      <div className={`text-[11px] font-semibold mt-0.5 ${readinessTier.textColor}`}>{readinessTier.label}</div>
+                      <div className={`h-[4px] ${readinessTier.trackColor} rounded-full mt-1.5 overflow-hidden w-20`}>
+                        <div className={`h-full ${readinessTier.barColor} rounded-full`} style={{ width: `${readinessScore}%` }} />
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-[11.5px] text-gray-400 mt-1">Log today</p>
+                  )}
+                </div>
               </div>
-              {/* Filter tabs */}
-              <div className="flex gap-[3px] bg-white rounded-xl border border-gray-200 p-[3px] shadow-sm">
-                {FILTER_OPTIONS.map(opt => (
-                  <button
-                    key={opt.value}
-                    onClick={() => setFilter(opt.value)}
-                    className={`px-3 py-[5px] rounded-[9px] text-xs font-medium transition-colors ${
-                      filter === opt.value ? 'bg-[#1C1612] text-white' : 'text-gray-500 hover:bg-gray-50'
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
+              {/* Calories */}
+              <div className="flex-1 bg-white border border-[#EDE5DB] rounded-2xl px-4 py-3 min-w-0">
+                <p className="text-[9.5px] font-bold uppercase tracking-[0.8px] text-[#9B8575] mb-0.5">Calories</p>
+                <div className={`text-[28px] font-bold leading-none tracking-[-2px] ${selectedDayTotalKcal > 0 ? 'text-[#C4622A]' : 'text-gray-300'}`}>
+                  {selectedDayTotalKcal > 0 ? selectedDayTotalKcal.toLocaleString() : '—'}
+                </div>
+                {selectedDayTotalKcal > 0 && <div className="text-[11px] font-semibold text-[#9B8575] mt-0.5">kcal today</div>}
+              </div>
+              {/* Streak */}
+              <div className="flex-1 bg-white border border-[#EDE5DB] rounded-2xl px-4 py-3 min-w-0">
+                <p className="text-[9.5px] font-bold uppercase tracking-[0.8px] text-[#9B8575] mb-0.5">Streak</p>
+                <div className="text-[28px] font-bold leading-none tracking-[-2px] text-[#1C1612]">{streak}</div>
+                <div className="text-[11px] font-semibold text-[#9B8575] mt-0.5">day streak · best {bestStreak}</div>
               </div>
             </div>
+            
+          
           </div>
 
           {/* Week nav */}
@@ -995,7 +1444,7 @@ export default function Dashboard() {
             <span className="text-[13px] font-semibold text-gray-700 min-w-[180px] text-center">{weekLabel}</span>
             <button
               onClick={() => setWeekOffset(o => o + 1)}
-              disabled={weekOffset >= 0}
+              disabled={weekOffset >= 1}
               className="w-[30px] h-[30px] flex items-center justify-center rounded-[9px] border border-gray-200 bg-white hover:bg-[#f5f4f0] text-gray-500 shadow-sm transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             >
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" /></svg>
@@ -1018,7 +1467,7 @@ export default function Dashboard() {
                   const isToday = key === todayKey;
                   const isSelected = i === selectedDayIdx;
                   const dayWorkouts = byDay[key] ?? [];
-                  const kcal = calcDayKcal(dayWorkouts, runningSessions, cyclingSessions, profileWeight);
+                  const kcal = calcDayKcal(dayWorkouts, runningSessions, cyclingSessions, swimmingSessions, profileWeight);
                   const totalKcal = kcal + (profileTDEEBase ?? 0) + profileCalorieAdjustment;
 
                   return (
@@ -1064,9 +1513,12 @@ export default function Dashboard() {
                             workout={w}
                             runningSessions={runningSessions}
                             cyclingSessions={cyclingSessions}
+                            swimmingSessions={swimmingSessions}
                             profileWeight={profileWeight}
                             onEdit={setEditTarget}
                             onDelete={handleDelete}
+                            onView={w => setDetailWorkout(prev => prev?.id === w.id ? null : w)}
+                            isSelected={detailWorkout?.id === w.id}
                           />
                         ))}
                         {dayWorkouts.length === 0 && (
@@ -1090,164 +1542,16 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* ── Right panel ── */}
-        <div className="w-[270px] shrink-0 border-l border-[#EDE5DB] bg-white flex flex-col overflow-y-auto h-screen">
-
-          {/* Zone 1: Readiness */}
-          <div className="px-5 pt-[22px] pb-[18px] border-b border-[#EDE5DB] shrink-0">
-            <p className="text-[9.5px] font-bold uppercase tracking-[0.8px] text-[#9B8575] mb-3">Readiness</p>
-            {readinessScore !== null && readinessTier ? (
-              <div className="flex items-center gap-3">
-                <div className={`text-[56px] font-bold leading-none tracking-[-3px] ${readinessTier.textColor}`}>
-                  {readinessScore}
-                </div>
-                <div className="flex-1">
-                  <div className={`text-[13px] font-bold ${readinessTier.textColor}`}>{readinessTier.label}</div>
-                  <div className="text-[10.5px] text-[#9B8575] mt-0.5">Sleep · Soreness · Motivation</div>
-                  <div className={`h-[5px] ${readinessTier.trackColor} rounded-full mt-2.5 overflow-hidden`}>
-                    <div className={`h-full ${readinessTier.barColor} rounded-full`} style={{ width: `${readinessScore}%` }} />
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <p className="text-[12.5px] text-gray-400">Log today to see readiness</p>
-            )}
-          </div>
-
-          {/* Zone 2: Day context */}
-          <div className="px-5 py-[10px] border-b border-[#EDE5DB] bg-[#faf9f7] flex items-center justify-between shrink-0">
-            <div>
-              <div className="text-[12.5px] font-bold text-[#1C1612]">{selectedDayLabel}</div>
-              <div className="text-[10.5px] text-gray-500 mt-0.5">Tap a day to view its log</div>
-            </div>
-            <Link
-              href="/daily-log"
-              className="text-[11px] font-medium text-gray-500 bg-white border border-[#EDE5DB] rounded-lg px-2.5 py-1 hover:text-[#1C1612] hover:border-gray-400 transition-colors"
-            >
-              Edit
-            </Link>
-          </div>
-
-          {/* Zone 3: Log fields */}
-          <div className="border-b border-[#EDE5DB] shrink-0">
-            {/* Body weight */}
-            <div className="flex items-center justify-between px-5 py-[9px] border-b border-[#faf9f7]">
-              <div className="flex items-center gap-[9px] text-[12px] font-medium text-gray-500">
-                <div className="w-6 h-6 rounded-[7px] bg-gray-100 flex items-center justify-center shrink-0">
-                  <svg className="w-3 h-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="8" y1="12" x2="16" y2="12" /></svg>
-                </div>
-                Body weight
-              </div>
-              <div className={`tracking-[-0.3px] ${selectedLog?.weight ? 'text-[13.5px] font-bold text-[#1C1612]' : 'text-[11.5px] text-gray-400'}`}>
-                {selectedLog?.weight != null ? `${selectedLog.weight} kg` : '—'}
-              </div>
-            </div>
-
-            {/* Soreness */}
-            <div className="flex items-center justify-between px-5 py-[9px] border-b border-[#faf9f7]">
-              <div className="flex items-center gap-[9px] text-[12px] font-medium text-gray-500">
-                <div className="w-6 h-6 rounded-[7px] bg-gray-100 flex items-center justify-center shrink-0">
-                  <svg className="w-3 h-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" /><line x1="4" y1="22" x2="4" y2="15" /></svg>
-                </div>
-                Soreness
-              </div>
-              <div className="flex gap-1">
-                {[1, 2, 3, 4, 5].map(n => (
-                  <div key={n} className={`w-2 h-2 rounded-full ${selectedLog?.soreness != null && n <= selectedLog.soreness ? 'bg-orange-400' : 'bg-gray-200'}`} />
-                ))}
-              </div>
-            </div>
-
-            {/* Stress */}
-            <div className="flex items-center justify-between px-5 py-[9px] border-b border-[#faf9f7]">
-              <div className="flex items-center gap-[9px] text-[12px] font-medium text-gray-500">
-                <div className="w-6 h-6 rounded-[7px] bg-gray-100 flex items-center justify-center shrink-0">
-                  <svg className="w-3 h-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" /></svg>
-                </div>
-                Stress
-              </div>
-              <div className="flex gap-1">
-                {[1, 2, 3, 4, 5].map(n => (
-                  <div key={n} className={`w-2 h-2 rounded-full ${selectedLog?.stress != null && n <= selectedLog.stress ? 'bg-orange-400' : 'bg-gray-200'}`} />
-                ))}
-              </div>
-            </div>
-
-            {/* Motivation */}
-            <div className="flex items-center justify-between px-5 py-[9px] border-b border-[#faf9f7]">
-              <div className="flex items-center gap-[9px] text-[12px] font-medium text-gray-500">
-                <div className="w-6 h-6 rounded-[7px] bg-gray-100 flex items-center justify-center shrink-0">
-                  <svg className="w-3 h-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" /></svg>
-                </div>
-                Motivation
-              </div>
-              <div className="flex gap-1">
-                {[1, 2, 3, 4, 5].map(n => (
-                  <div key={n} className={`w-2 h-2 rounded-full ${selectedLog?.motivation != null && n <= selectedLog.motivation ? 'bg-green-500' : 'bg-gray-200'}`} />
-                ))}
-              </div>
-            </div>
-
-            {/* Sleep */}
-            <div className="flex items-center justify-between px-5 py-[9px] border-b border-[#faf9f7]">
-              <div className="flex items-center gap-[9px] text-[12px] font-medium text-gray-500">
-                <div className="w-6 h-6 rounded-[7px] bg-gray-100 flex items-center justify-center shrink-0">
-                  <svg className="w-3 h-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 18a5 5 0 00-10 0" /><line x1="12" y1="2" x2="12" y2="9" /><line x1="4.22" y1="10.22" x2="5.64" y2="11.64" /><line x1="1" y1="18" x2="3" y2="18" /><line x1="21" y1="18" x2="23" y2="18" /><line x1="18.36" y1="11.64" x2="19.78" y2="10.22" /></svg>
-                </div>
-                Sleep
-              </div>
-              <div className={`tracking-[-0.3px] ${selectedLog?.sleep != null ? 'text-[13.5px] font-bold text-[#1C1612]' : 'text-[11.5px] text-gray-400'}`}>
-                {selectedLog?.sleep != null ? SLEEP_LABELS[selectedLog.sleep - 1] : '—'}
-              </div>
-            </div>
-
-            {/* Calories */}
-            <div className="flex items-center justify-between px-5 py-[9px]">
-              <div className="flex items-center gap-[9px] text-[12px] font-medium text-gray-500">
-                <div className="w-6 h-6 rounded-[7px] bg-gray-100 flex items-center justify-center shrink-0">
-                  <svg className="w-3 h-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8h1a4 4 0 010 8h-1" /><path d="M2 8h16v9a4 4 0 01-4 4H6a4 4 0 01-4-4V8z" /><line x1="6" y1="1" x2="6" y2="4" /><line x1="10" y1="1" x2="10" y2="4" /><line x1="14" y1="1" x2="14" y2="4" /></svg>
-                </div>
-                Calories
-              </div>
-              <div className={`tracking-[-0.3px] ${selectedDayTotalKcal > 0 ? 'text-[13.5px] font-bold text-[#C4622A]' : 'text-[11.5px] text-gray-400'}`}>
-                {selectedDayTotalKcal > 0 ? `${selectedDayTotalKcal.toLocaleString()} kcal` : '—'}
-              </div>
-            </div>
-          </div>
-
-          {/* Zone 4: Streak */}
-          <div className="px-5 pt-4 pb-[22px] flex-1">
-            <p className="text-[9.5px] font-bold uppercase tracking-[0.8px] text-[#9B8575] mb-2.5">Streak</p>
-            <div className="flex items-center gap-2.5 mb-3">
-              <div className="text-[38px] font-bold text-[#1C1612] leading-none tracking-[-2px]">{streak}</div>
-              <div>
-                <div className="text-[13px] font-bold text-[#1C1612]">day streak</div>
-                <div className="text-[10.5px] text-gray-400 mt-0.5">Best: {bestStreak} days</div>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-1">
-              {last14Days.map((d, i) => {
-                const dKey = d.toDateString();
-                const isToday = dKey === todayKey;
-                const hasWorkout = workoutDaySet.has(dKey);
-                return (
-                  <div
-                    key={i}
-                    className={`w-3.5 h-3.5 rounded-[4px] ${
-                      isToday
-                        ? 'bg-[#1C1612] ring-2 ring-gray-400 ring-offset-1'
-                        : hasWorkout
-                          ? 'bg-[#1C1612]'
-                          : 'bg-gray-200'
-                    }`}
-                  />
-                );
-              })}
-            </div>
-            <p className="text-[10px] text-gray-400 mt-1.5">Last 14 days</p>
-          </div>
-
-        </div>
+        {detailWorkout && (
+          <WorkoutDetailPanel
+            workout={detailWorkout}
+            runningSessions={runningSessions}
+            cyclingSessions={cyclingSessions}
+            swimmingSessions={swimmingSessions}
+            profileWeight={profileWeight}
+            onClose={() => setDetailWorkout(null)}
+          />
+        )}
       </div>
 
       {editTarget && (

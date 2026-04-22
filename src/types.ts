@@ -11,7 +11,7 @@ export interface Workout {
   name: string;
   created_at: string;
   duration: number;
-  session_type: 'lifting' | 'running' | 'cycling';
+  session_type: 'lifting' | 'running' | 'cycling' | 'swimming';
 }
 
 export interface CyclingSession {
@@ -37,6 +37,19 @@ export interface RunningSession {
   max_heart_rate: number | null;
   elevation_gain: number | null;  // meters
   run_type: string;
+  notes: string | null;
+}
+
+export interface SwimmingSession {
+  id: string;
+  workout_id: string;
+  distance: number;               // stored in km
+  avg_pace: number | null;        // seconds per 100m
+  avg_heart_rate: number | null;
+  max_heart_rate: number | null;
+  stroke_type: string | null;
+  pool_length: number | null;     // meters: 25 or 50
+  swim_type: string;
   notes: string | null;
 }
 

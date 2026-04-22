@@ -10,6 +10,7 @@ import {
   calculateWorkoutKcal,
   calculateRunningKcal,
   calculateCyclingKcal,
+  calculateSwimmingKcal,
   calculateTDEE,
   ACTIVITY_LABELS,
   ACTIVITY_MULTIPLIERS,
@@ -36,7 +37,20 @@ interface Workout {
   created_at: string;
   duration: number;
   rpe: number | null;
-  session_type: 'lifting' | 'running' | 'cycling';
+  session_type: 'lifting' | 'running' | 'cycling' | 'swimming';
+}
+
+interface SwimmingSession {
+  id: string;
+  workout_id: string;
+  distance: number;
+  avg_pace: number | null;
+  avg_heart_rate: number | null;
+  max_heart_rate: number | null;
+  stroke_type: string | null;
+  pool_length: number | null;
+  swim_type: string;
+  notes: string | null;
 }
 
 interface CyclingSession {
@@ -149,6 +163,7 @@ export default function HistoryPage() {
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [runningSessions, setRunningSessions] = useState<Record<string, RunningSession>>({});
   const [cyclingSessions, setCyclingSessions] = useState<Record<string, CyclingSession>>({});
+  const [swimmingSessions, setSwimmingSessions] = useState<Record<string, SwimmingSession>>({});
   const [loading, setLoading] = useState(true);
   const [weekOffset, setWeekOffset] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -181,6 +196,7 @@ export default function HistoryPage() {
 
       const runningIds = allWorkouts.filter(w => w.session_type === 'running').map(w => w.id);
       const cyclingIds = allWorkouts.filter(w => w.session_type === 'cycling').map(w => w.id);
+      const swimmingIds = allWorkouts.filter(w => w.session_type === 'swimming').map(w => w.id);
 
       await Promise.all([
         runningIds.length > 0
@@ -197,6 +213,13 @@ export default function HistoryPage() {
               setCyclingSessions(map);
             })
           : Promise.resolve(),
+        swimmingIds.length > 0
+          ? supabase.from('swimming_sessions').select('*').in('workout_id', swimmingIds).then(({ data }) => {
+              const map: Record<string, SwimmingSession> = {};
+              for (const r of data ?? []) map[r.workout_id] = r as SwimmingSession;
+              setSwimmingSessions(map);
+            })
+          : Promise.resolve(),
       ]);
 
       setLoading(false);
@@ -209,7 +232,7 @@ export default function HistoryPage() {
 
     const workout = workouts.find(w => w.id === id);
     // Cardio details are already loaded upfront; only lazy-fetch for lifting
-    if (!workout || workout.session_type === 'running' || workout.session_type === 'cycling') return;
+    if (!workout || workout.session_type === 'running' || workout.session_type === 'cycling' || workout.session_type === 'swimming') return;
     if (details[id]) return;
 
     setDetailLoading(true);
@@ -242,6 +265,7 @@ export default function HistoryPage() {
   const selectedExercises = selectedId ? details[selectedId] : undefined;
   const selectedRunning = selectedId ? runningSessions[selectedId] : undefined;
   const selectedCycling = selectedId ? cyclingSessions[selectedId] : undefined;
+  const selectedSwimming = selectedId ? swimmingSessions[selectedId] : undefined;
 
   const hours = Array.from({ length: END_HOUR - START_HOUR }, (_, i) => START_HOUR + i);
 
@@ -260,6 +284,13 @@ export default function HistoryPage() {
         const cs = cyclingSessions[w.id];
         if (cs && profileWeight) {
           total += calculateCyclingKcal(cs.distance, profileWeight, cs.elevation_gain ?? 0, cs.avg_power, w.duration);
+        } else {
+          total += calculateWorkoutKcal([{ duration: w.duration, rpe: w.rpe }]);
+        }
+      } else if (w.session_type === 'swimming') {
+        const ss = swimmingSessions[w.id];
+        if (ss && profileWeight) {
+          total += calculateSwimmingKcal(ss.distance, profileWeight);
         } else {
           total += calculateWorkoutKcal([{ duration: w.duration, rpe: w.rpe }]);
         }
@@ -488,14 +519,19 @@ export default function HistoryPage() {
                         ? 'bg-emerald-500 border-emerald-500 hover:bg-emerald-600 hover:border-emerald-600'
                         : w.session_type === 'cycling'
                           ? 'bg-amber-500 border-amber-500 hover:bg-amber-600 hover:border-amber-600'
-                          : 'bg-indigo-500 border-indigo-500 hover:bg-indigo-600 hover:border-indigo-600';
+                          : w.session_type === 'swimming'
+                            ? 'bg-cyan-500 border-cyan-500 hover:bg-cyan-600 hover:border-cyan-600'
+                            : 'bg-indigo-500 border-indigo-500 hover:bg-indigo-600 hover:border-indigo-600';
 
                     const unit = displayUnit(profile?.unit_preference ?? null);
+                    const ss = w.session_type === 'swimming' ? swimmingSessions[w.id] : null;
                     const distLabel = rs
                       ? formatDistance(toDisplayUnit(rs.distance, unit), unit)
                       : cs
                         ? formatDistance(toDisplayUnit(cs.distance, unit), unit)
-                        : null;
+                        : ss
+                          ? formatDistance(toDisplayUnit(ss.distance, unit), unit)
+                          : null;
 
                     return (
                       <button
@@ -539,7 +575,9 @@ export default function HistoryPage() {
                       ? 'bg-emerald-100 text-emerald-700'
                       : selectedWorkout.session_type === 'cycling'
                         ? 'bg-amber-100 text-amber-700'
-                        : 'bg-indigo-100 text-indigo-700'
+                        : selectedWorkout.session_type === 'swimming'
+                          ? 'bg-cyan-100 text-cyan-700'
+                          : 'bg-indigo-100 text-indigo-700'
                   }`}>
                     {selectedWorkout.session_type}
                   </span>
@@ -666,6 +704,62 @@ export default function HistoryPage() {
                   </div>
                   {selectedCycling.notes && (
                     <p className="text-sm text-gray-600 italic">{selectedCycling.notes}</p>
+                  )}
+                </div>
+                );
+              })()}
+
+              {/* Swimming detail */}
+              {selectedWorkout.session_type === 'swimming' && selectedSwimming && (() => {
+                const unit = displayUnit(profile?.unit_preference ?? null);
+                return (
+                <div className="flex flex-col gap-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <div className="bg-gray-50 rounded-xl px-4 py-3">
+                      <p className="text-xs text-gray-400 mb-0.5">Distance</p>
+                      <p className="text-sm font-semibold text-gray-900">
+                        {formatDistance(toDisplayUnit(selectedSwimming.distance, unit), unit)}
+                      </p>
+                    </div>
+                    {selectedSwimming.avg_pace && (
+                      <div className="bg-gray-50 rounded-xl px-4 py-3">
+                        <p className="text-xs text-gray-400 mb-0.5">Avg pace</p>
+                        <p className="text-sm font-semibold text-gray-900">
+                          {formatPace(selectedSwimming.avg_pace, 'km').replace('/km', '/100m')}
+                        </p>
+                      </div>
+                    )}
+                    <div className="bg-gray-50 rounded-xl px-4 py-3">
+                      <p className="text-xs text-gray-400 mb-0.5">Type</p>
+                      <p className="text-sm font-semibold text-gray-900 capitalize">{selectedSwimming.swim_type}</p>
+                    </div>
+                    {selectedSwimming.stroke_type && (
+                      <div className="bg-gray-50 rounded-xl px-4 py-3">
+                        <p className="text-xs text-gray-400 mb-0.5">Stroke</p>
+                        <p className="text-sm font-semibold text-gray-900 capitalize">{selectedSwimming.stroke_type}</p>
+                      </div>
+                    )}
+                    {selectedSwimming.pool_length != null && (
+                      <div className="bg-gray-50 rounded-xl px-4 py-3">
+                        <p className="text-xs text-gray-400 mb-0.5">Pool</p>
+                        <p className="text-sm font-semibold text-gray-900">{selectedSwimming.pool_length}m</p>
+                      </div>
+                    )}
+                    {selectedSwimming.avg_heart_rate && (
+                      <div className="bg-gray-50 rounded-xl px-4 py-3">
+                        <p className="text-xs text-gray-400 mb-0.5">Avg HR</p>
+                        <p className="text-sm font-semibold text-gray-900">{selectedSwimming.avg_heart_rate} bpm</p>
+                      </div>
+                    )}
+                    {selectedSwimming.max_heart_rate && (
+                      <div className="bg-gray-50 rounded-xl px-4 py-3">
+                        <p className="text-xs text-gray-400 mb-0.5">Max HR</p>
+                        <p className="text-sm font-semibold text-gray-900">{selectedSwimming.max_heart_rate} bpm</p>
+                      </div>
+                    )}
+                  </div>
+                  {selectedSwimming.notes && (
+                    <p className="text-sm text-gray-600 italic">{selectedSwimming.notes}</p>
                   )}
                 </div>
                 );

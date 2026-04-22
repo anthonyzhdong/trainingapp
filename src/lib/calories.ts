@@ -95,6 +95,17 @@ export function calculateCyclingKcal(
 }
 
 /**
+ * Estimates calories burned from a swimming session.
+ * ~0.7 kcal per kg per km (between running and cycling).
+ */
+export function calculateSwimmingKcal(
+  distanceKm: number,
+  weightKg: number,
+): number {
+  return Math.round(0.7 * distanceKm * weightKg);
+}
+
+/**
  * Total Daily Energy Expenditure = BMR × lifestyle multiplier + workout bonus.
  */
 export function calculateTDEE(

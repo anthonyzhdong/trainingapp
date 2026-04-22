@@ -9,11 +9,12 @@ import {
   calculateWorkoutKcal,
   calculateRunningKcal,
   calculateCyclingKcal,
+  calculateSwimmingKcal,
 } from '@/lib/calories';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type SessionType = 'lifting' | 'running' | 'cycling';
+type SessionType = 'lifting' | 'running' | 'cycling' | 'swimming';
 
 interface Workout {
   id: string;
@@ -59,6 +60,23 @@ interface CyclingSessionFull {
   notes: string | null;
 }
 
+interface SwimmingSession {
+  workout_id: string;
+  distance: number;
+  swim_type: string;
+}
+
+interface SwimmingSessionFull {
+  distance: number;
+  swim_type: string;
+  avg_pace: number | null;
+  avg_heart_rate: number | null;
+  max_heart_rate: number | null;
+  stroke_type: string | null;
+  pool_length: number | null;
+  notes: string | null;
+}
+
 interface ExerciseEntry {
   name: string;
   sets: { reps: number; weight: number }[];
@@ -68,6 +86,8 @@ interface ExerciseEntry {
 
 const RUN_TYPES = ['easy', 'tempo', 'interval', 'long', 'race'] as const;
 const CYCLE_TYPES = ['easy', 'endurance', 'tempo', 'interval', 'climb', 'race'] as const;
+const SWIM_TYPES = ['easy', 'tempo', 'interval', 'sprint', 'race'] as const;
+const STROKE_TYPES = ['freestyle', 'backstroke', 'breaststroke', 'butterfly', 'mixed'] as const;
 const RPE_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
 const DAY_LABELS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'] as const;
 
@@ -75,18 +95,21 @@ const CATEGORY_COLORS: Record<SessionType, string> = {
   lifting: 'bg-blue-100 text-blue-700 border-blue-200',
   running: 'bg-green-100 text-green-700 border-green-200',
   cycling: 'bg-orange-100 text-orange-700 border-orange-200',
+  swimming: 'bg-cyan-100 text-cyan-700 border-cyan-200',
 };
 
 const CATEGORY_DOT: Record<SessionType, string> = {
   lifting: 'bg-blue-500',
   running: 'bg-green-500',
   cycling: 'bg-orange-500',
+  swimming: 'bg-cyan-500',
 };
 
 const CATEGORY_LABELS: Record<SessionType, string> = {
   lifting: 'Lifting',
   running: 'Running',
   cycling: 'Cycling',
+  swimming: 'Swimming',
 };
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
@@ -152,6 +175,7 @@ function workoutSubtitle(
   w: Workout,
   runningSessions: Record<string, RunningSession>,
   cyclingSessions: Record<string, CyclingSession>,
+  swimmingSessions: Record<string, SwimmingSession>,
 ): string {
   if (w.session_type === 'running') {
     const rs = runningSessions[w.id];
@@ -161,6 +185,10 @@ function workoutSubtitle(
     const cs = cyclingSessions[w.id];
     if (cs) return `${cs.distance % 1 === 0 ? cs.distance : cs.distance.toFixed(1)} km · ${cs.ride_type}`;
   }
+  if (w.session_type === 'swimming') {
+    const ss = swimmingSessions[w.id];
+    if (ss) return `${ss.distance % 1 === 0 ? ss.distance : ss.distance.toFixed(1)} km · ${ss.swim_type}`;
+  }
   return w.duration ? formatDuration(w.duration) : '';
 }
 
@@ -168,6 +196,7 @@ function calcDayKcal(
   dayWorkouts: Workout[],
   runningSessions: Record<string, RunningSession>,
   cyclingSessions: Record<string, CyclingSession>,
+  swimmingSessions: Record<string, SwimmingSession>,
   profileWeight: number | null,
 ): number {
   let total = 0;
@@ -183,6 +212,13 @@ function calcDayKcal(
       const cs = cyclingSessions[w.id];
       if (cs && profileWeight) {
         total += calculateCyclingKcal(cs.distance, profileWeight, cs.elevation_gain ?? 0, cs.avg_power, w.duration);
+      } else {
+        total += calculateWorkoutKcal([{ duration: w.duration, rpe: w.rpe }]);
+      }
+    } else if (w.session_type === 'swimming') {
+      const ss = swimmingSessions[w.id];
+      if (ss && profileWeight) {
+        total += calculateSwimmingKcal(ss.distance, profileWeight);
       } else {
         total += calculateWorkoutKcal([{ duration: w.duration, rpe: w.rpe }]);
       }
@@ -234,9 +270,26 @@ function EditOverlay({ workout, onClose, onSaved }: EditOverlayProps) {
   const [cycleRpe, setCycleRpe] = useState('');
   const [cycleNotes, setCycleNotes] = useState('');
 
+  const [swimDistance, setSwimDistance] = useState('');
+  const [swimType, setSwimType] = useState<string>('easy');
+  const [strokeType, setStrokeType] = useState<string>('freestyle');
+  const [swimAvgHR, setSwimAvgHR] = useState('');
+  const [swimMaxHR, setSwimMaxHR] = useState('');
+  const [swimPoolLength, setSwimPoolLength] = useState<'25' | '50' | ''>('');
+  const [swimRpe, setSwimRpe] = useState('');
+  const [swimNotes, setSwimNotes] = useState('');
+
   const durationNum = parseFloat(duration) || 0;
   const runPace = computePace(parseFloat(runDistance) || 0, durationNum);
   const cycleSpeed = computeSpeed(parseFloat(cycleDistance) || 0, durationNum);
+  const swimPace = (() => {
+    const d = parseFloat(swimDistance) || 0;
+    if (!d || !durationNum) return null;
+    const secondsPer100m = (durationNum * 60) / (d * 10);
+    const mins = Math.floor(secondsPer100m / 60);
+    const secs = Math.round(secondsPer100m % 60);
+    return `${mins}:${secs < 10 ? '0' : ''}${secs} /100m`;
+  })();
 
   useEffect(() => {
     const supabase = createClient();
@@ -275,6 +328,23 @@ function EditOverlay({ workout, onClose, onSaved }: EditOverlayProps) {
           setCycleNotes(cs.notes ?? '');
         }
         setCycleRpe(workout.rpe != null ? String(workout.rpe) : '');
+      } else if (workout.session_type === 'swimming') {
+        const { data } = await supabase
+          .from('swimming_sessions')
+          .select('distance, swim_type, avg_heart_rate, max_heart_rate, stroke_type, pool_length, notes')
+          .eq('workout_id', workout.id)
+          .maybeSingle();
+        if (data) {
+          const ss = data as SwimmingSessionFull;
+          setSwimDistance(String(ss.distance));
+          setSwimType(ss.swim_type);
+          setSwimAvgHR(ss.avg_heart_rate != null ? String(ss.avg_heart_rate) : '');
+          setSwimMaxHR(ss.max_heart_rate != null ? String(ss.max_heart_rate) : '');
+          setStrokeType(ss.stroke_type ?? 'freestyle');
+          setSwimPoolLength(ss.pool_length != null ? (String(ss.pool_length) as '25' | '50') : '');
+          setSwimNotes(ss.notes ?? '');
+        }
+        setSwimRpe(workout.rpe != null ? String(workout.rpe) : '');
       } else {
         const { data: weData } = await supabase
           .from('workout_exercises')
@@ -360,6 +430,28 @@ function EditOverlay({ workout, onClose, onSaved }: EditOverlayProps) {
           notes: cycleNotes || null,
         }).eq('workout_id', workout.id);
         if (sErr) { setError(sErr.message); return; }
+      } else if (workout.session_type === 'swimming') {
+        const distKm = parseFloat(swimDistance) || 0;
+        const avgPace = durationSeconds > 0 && distKm > 0
+          ? Math.round(durationSeconds / (distKm * 10)) : null;
+        const { error: wErr } = await supabase.from('workouts').update({
+          name: name.trim() || workout.name,
+          duration: durationSeconds,
+          rpe: swimRpe ? parseFloat(swimRpe) : null,
+          created_at: new Date(workoutDate).toISOString(),
+        }).eq('id', workout.id);
+        if (wErr) { setError(wErr.message); return; }
+        const { error: sErr } = await supabase.from('swimming_sessions').update({
+          distance: distKm,
+          swim_type: swimType,
+          avg_pace: avgPace,
+          avg_heart_rate: swimAvgHR ? parseInt(swimAvgHR) : null,
+          max_heart_rate: swimMaxHR ? parseInt(swimMaxHR) : null,
+          stroke_type: strokeType || null,
+          pool_length: swimPoolLength ? parseInt(swimPoolLength) : null,
+          notes: swimNotes || null,
+        }).eq('workout_id', workout.id);
+        if (sErr) { setError(sErr.message); return; }
       } else {
         const { error: wErr } = await supabase.from('workouts').update({
           name: name.trim() || workout.name,
@@ -401,7 +493,9 @@ function EditOverlay({ workout, onClose, onSaved }: EditOverlayProps) {
           ? (liftingRpe ? parseFloat(liftingRpe) : null)
           : workout.session_type === 'running'
             ? (runRpe ? parseFloat(runRpe) : null)
-            : (cycleRpe ? parseFloat(cycleRpe) : null),
+            : workout.session_type === 'cycling'
+              ? (cycleRpe ? parseFloat(cycleRpe) : null)
+              : (swimRpe ? parseFloat(swimRpe) : null),
         created_at: new Date(workoutDate).toISOString(),
       });
     } finally {
@@ -576,6 +670,65 @@ function EditOverlay({ workout, onClose, onSaved }: EditOverlayProps) {
                 </>
               )}
 
+              {/* SWIMMING */}
+              {workout.session_type === 'swimming' && (
+                <>
+                  <div className={cardCls}>
+                    <p className={sectionLabelCls}>Distance & pace</p>
+                    <input type="number" min={0} step={0.01} value={swimDistance} onChange={e => setSwimDistance(e.target.value)} placeholder="0.00 km" className={`${inputCls} text-2xl font-bold tracking-tight`} style={{ fontFamily: 'Georgia, serif' }} />
+                    {swimPace && (
+                      <div className="flex items-center justify-between bg-[#FDF1EA] border border-[#ECD5C5] rounded-xl px-4 py-3">
+                        <span className="text-[10px] font-semibold uppercase tracking-widest text-[#C4622A]">Avg pace</span>
+                        <span className="text-xl font-bold text-[#C4622A]" style={{ fontFamily: 'Georgia, serif' }}>{swimPace}</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className={cardCls}>
+                    <p className={sectionLabelCls}>Swim type</p>
+                    <div className="flex flex-wrap gap-2">
+                      {SWIM_TYPES.map(t => (
+                        <button key={t} type="button" onClick={() => setSwimType(t)} className={`px-4 py-1.5 rounded-full border text-sm font-semibold capitalize transition-all ${swimType === t ? 'bg-[#C4622A] border-[#C4622A] text-white' : 'bg-white border-[#EDE5DB] text-[#9B8575] hover:border-[#C4622A] hover:text-[#C4622A]'}`}>{t}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className={cardCls}>
+                    <p className={sectionLabelCls}>Stroke</p>
+                    <div className="flex flex-wrap gap-2">
+                      {STROKE_TYPES.map(t => (
+                        <button key={t} type="button" onClick={() => setStrokeType(t)} className={`px-4 py-1.5 rounded-full border text-sm font-semibold capitalize transition-all ${strokeType === t ? 'bg-[#C4622A] border-[#C4622A] text-white' : 'bg-white border-[#EDE5DB] text-[#9B8575] hover:border-[#C4622A] hover:text-[#C4622A]'}`}>{t}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className={cardCls}>
+                    <p className={sectionLabelCls}>Heart rate & pool</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="flex flex-col gap-1.5"><label className={fieldLabelCls}>Avg HR (bpm)</label><input type="number" min={0} value={swimAvgHR} onChange={e => setSwimAvgHR(e.target.value)} placeholder="145" className={inputCls} /></div>
+                      <div className="flex flex-col gap-1.5"><label className={fieldLabelCls}>Max HR (bpm)</label><input type="number" min={0} value={swimMaxHR} onChange={e => setSwimMaxHR(e.target.value)} placeholder="170" className={inputCls} /></div>
+                      <div className="flex flex-col gap-1.5 col-span-2">
+                        <label className={fieldLabelCls}>Pool length (m)</label>
+                        <div className="flex gap-2">
+                          {(['25', '50', ''] as const).map(len => (
+                            <button key={len} type="button" onClick={() => setSwimPoolLength(len)} className={`px-4 py-1.5 rounded-full border text-sm font-semibold transition-all ${swimPoolLength === len ? 'bg-[#C4622A] border-[#C4622A] text-white' : 'bg-white border-[#EDE5DB] text-[#9B8575] hover:border-[#C4622A] hover:text-[#C4622A]'}`}>{len === '' ? 'Open water' : `${len}m`}</button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className={cardCls}>
+                    <p className={sectionLabelCls}>Perceived effort (RPE)</p>
+                    <div className="flex gap-1.5">
+                      {RPE_VALUES.map(v => (
+                        <button key={v} type="button" onClick={() => setSwimRpe(String(v))} className={`flex-1 h-9 rounded-lg border text-xs font-semibold transition-all ${swimRpe === String(v) ? 'bg-[#C4622A] border-[#C4622A] text-white' : 'bg-white border-[#EDE5DB] text-[#9B8575] hover:border-[#C4622A] hover:text-[#C4622A]'}`}>{v}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className={fieldLabelCls}>Notes <span className="text-[#CCC1B5] font-normal">(optional)</span></label>
+                    <textarea value={swimNotes} onChange={e => setSwimNotes(e.target.value)} rows={3} placeholder="How did it feel? Any observations…" className={`${inputCls} resize-none`} />
+                  </div>
+                </>
+              )}
+
               <div className="flex flex-col gap-1.5">
                 <label className={fieldLabelCls}>Date & Time</label>
                 <input type="datetime-local" value={workoutDate} onChange={e => setWorkoutDate(e.target.value)} className={inputCls} />
@@ -602,15 +755,16 @@ interface WorkoutCardProps {
   workout: Workout;
   runningSessions: Record<string, RunningSession>;
   cyclingSessions: Record<string, CyclingSession>;
+  swimmingSessions: Record<string, SwimmingSession>;
   profileWeight: number | null;
   onEdit: (w: Workout) => void;
   onDelete: (id: string) => void;
 }
 
-function WorkoutCard({ workout: w, runningSessions, cyclingSessions, profileWeight, onEdit, onDelete }: WorkoutCardProps) {
+function WorkoutCard({ workout: w, runningSessions, cyclingSessions, swimmingSessions, profileWeight, onEdit, onDelete }: WorkoutCardProps) {
   const [confirming, setConfirming] = useState(false);
-  const subtitle = workoutSubtitle(w, runningSessions, cyclingSessions);
-  const kcal = calcDayKcal([w], runningSessions, cyclingSessions, profileWeight);
+  const subtitle = workoutSubtitle(w, runningSessions, cyclingSessions, swimmingSessions);
+  const kcal = calcDayKcal([w], runningSessions, cyclingSessions, swimmingSessions, profileWeight);
 
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-3.5 flex flex-col gap-2.5 hover:shadow-md transition-shadow">
@@ -686,12 +840,14 @@ const FILTER_OPTIONS: { label: string; value: FilterCategory }[] = [
   { label: 'Lifting', value: 'lifting' },
   { label: 'Running', value: 'running' },
   { label: 'Cycling', value: 'cycling' },
+  { label: 'Swimming', value: 'swimming' },
 ];
 
 export default function DisplayWorkout() {
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [runningSessions, setRunningSessions] = useState<Record<string, RunningSession>>({});
   const [cyclingSessions, setCyclingSessions] = useState<Record<string, CyclingSession>>({});
+  const [swimmingSessions, setSwimmingSessions] = useState<Record<string, SwimmingSession>>({});
   const [profileWeight, setProfileWeight] = useState<number | null>(null);
   const [profileTDEEBase, setProfileTDEEBase] = useState<number | null>(null);
   const [profileCalorieAdjustment, setProfileCalorieAdjustment] = useState<number>(0);
@@ -730,6 +886,7 @@ export default function DisplayWorkout() {
 
       const runIds = all.filter(w => w.session_type === 'running').map(w => w.id);
       const cycleIds = all.filter(w => w.session_type === 'cycling').map(w => w.id);
+      const swimIds = all.filter(w => w.session_type === 'swimming').map(w => w.id);
 
       await Promise.all([
         runIds.length > 0
@@ -752,6 +909,17 @@ export default function DisplayWorkout() {
                 const map: Record<string, CyclingSession> = {};
                 for (const r of data ?? []) map[r.workout_id] = r as CyclingSession;
                 setCyclingSessions(map);
+              })
+          : Promise.resolve(),
+        swimIds.length > 0
+          ? supabase
+              .from('swimming_sessions')
+              .select('workout_id, distance, swim_type')
+              .in('workout_id', swimIds)
+              .then(({ data }) => {
+                const map: Record<string, SwimmingSession> = {};
+                for (const r of data ?? []) map[r.workout_id] = r as SwimmingSession;
+                setSwimmingSessions(map);
               })
           : Promise.resolve(),
       ]);
@@ -819,6 +987,15 @@ export default function DisplayWorkout() {
         .maybeSingle()
         .then(({ data }) => {
           if (data) setCyclingSessions(prev => ({ ...prev, [updated.id]: data as CyclingSession }));
+        });
+    } else if (updated.session_type === 'swimming') {
+      createClient()
+        .from('swimming_sessions')
+        .select('workout_id, distance, swim_type')
+        .eq('workout_id', updated.id)
+        .maybeSingle()
+        .then(({ data }) => {
+          if (data) setSwimmingSessions(prev => ({ ...prev, [updated.id]: data as SwimmingSession }));
         });
     }
     setEditTarget(null);
@@ -904,7 +1081,7 @@ export default function DisplayWorkout() {
                 const key = toDateKey(day);
                 const isToday = key === todayKey;
                 const dayWorkouts = byDay[key] ?? [];
-                const kcal = calcDayKcal(dayWorkouts, runningSessions, cyclingSessions, profileWeight);
+                const kcal = calcDayKcal(dayWorkouts, runningSessions, cyclingSessions, swimmingSessions, profileWeight);
 
                 return (
                   <div key={i} className="flex flex-col gap-2 min-w-0">
@@ -943,6 +1120,7 @@ export default function DisplayWorkout() {
                           workout={w}
                           runningSessions={runningSessions}
                           cyclingSessions={cyclingSessions}
+                          swimmingSessions={swimmingSessions}
                           profileWeight={profileWeight}
                           onEdit={setEditTarget}
                           onDelete={handleDelete}

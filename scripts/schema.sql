@@ -39,7 +39,7 @@ create table workouts (
     name text not null,
     duration integer not null,
     rpe numeric,
-    session_type text not null,  -- 'lifting' | 'running' | 'cycling'
+    session_type text not null,  -- 'lifting' | 'running' | 'cycling' | 'swimming'
     status text,
     created_at timestamptz default now()
 );
@@ -77,6 +77,19 @@ CREATE TABLE planned_sessions (
 );
 
 
+
+create table swimming_sessions (
+    id uuid primary key default uuid_generate_v4(),
+    workout_id uuid not null references workouts(id) on delete cascade,
+    distance numeric not null,           -- stored in km
+    avg_pace integer,                    -- seconds per 100m (derived from distance + duration)
+    avg_heart_rate integer,              -- bpm
+    max_heart_rate integer,              -- bpm
+    stroke_type text,                    -- 'freestyle' | 'backstroke' | 'breaststroke' | 'butterfly' | 'mixed'
+    pool_length integer,                 -- meters: 25 or 50
+    swim_type text not null,             -- 'easy' | 'tempo' | 'interval' | 'sprint' | 'race'
+    notes text
+);
 
 create table running_sessions (
     id uuid primary key default uuid_generate_v4(),

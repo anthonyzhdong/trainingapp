@@ -17,6 +17,8 @@ const defaultSet = () => ({ reps: 0, weight: 0 });
 
 const RUN_TYPES = ['easy', 'tempo', 'interval', 'long', 'race'] as const;
 const CYCLE_TYPES = ['easy', 'endurance', 'tempo', 'interval', 'climb', 'race'] as const;
+const SWIM_TYPES = ['easy', 'tempo', 'interval', 'sprint', 'race'] as const;
+const STROKE_TYPES = ['freestyle', 'backstroke', 'breaststroke', 'butterfly', 'mixed'] as const;
 const RPE_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
 
 // ─── Stone design tokens ────────────────────────────────────────────────────
@@ -54,7 +56,7 @@ export default function WorkoutForm() {
   const router = useRouter();
 
   // --- shared state ---
-  const [sessionType, setSessionType] = useState<'lifting' | 'running' | 'cycling'>('lifting');
+  const [sessionType, setSessionType] = useState<'lifting' | 'running' | 'cycling' | 'swimming'>('lifting');
   const [workoutName, setWorkoutName] = useState('');
   const [duration, setDuration] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -88,6 +90,17 @@ export default function WorkoutForm() {
   const [cycleRpe, setCycleRpe] = useState('');
   const [cycleNotes, setCycleNotes] = useState('');
 
+  // --- swimming state ---
+  const [swimDistance, setSwimDistance] = useState('');
+  const [swimUnit, setSwimUnit] = useState<'km' | 'mi'>('km');
+  const [swimType, setSwimType] = useState<string>('easy');
+  const [strokeType, setStrokeType] = useState<string>('freestyle');
+  const [swimAvgHR, setSwimAvgHR] = useState('');
+  const [swimMaxHR, setSwimMaxHR] = useState('');
+  const [swimPoolLength, setSwimPoolLength] = useState<'25' | '50' | ''>('');
+  const [swimRpe, setSwimRpe] = useState('');
+  const [swimNotes, setSwimNotes] = useState('');
+
   const [workoutDate, setWorkoutDate] = useState<string>(() => {
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
@@ -103,6 +116,16 @@ export default function WorkoutForm() {
     () => computeSpeed(cycleDistance, duration, cycleUnit),
     [cycleDistance, duration, cycleUnit]
   );
+  const swimPace = useMemo(() => {
+    const d = parseFloat(swimDistance);
+    const dur = parseFloat(duration);
+    if (!d || !dur || d <= 0 || dur <= 0) return null;
+    const distKm = swimUnit === 'mi' ? d * 1.60934 : d;
+    const secondsPer100m = (dur * 60) / (distKm * 10);
+    const mins = Math.floor(secondsPer100m / 60);
+    const secs = Math.round(secondsPer100m % 60);
+    return `${mins}:${secs < 10 ? '0' : ''}${secs} /100m`;
+  }, [swimDistance, duration, swimUnit]);
 
   // --- lifting helpers ---
   const addExercise = () => {
@@ -269,6 +292,54 @@ export default function WorkoutForm() {
           setError(runError.message);
           return;
         }
+      } else if (sessionType === 'swimming') {
+        if (!swimDistance || parseFloat(swimDistance) <= 0) {
+          setError('Please enter a valid distance.');
+          return;
+        }
+
+        const { data: workout, error: workoutError } = await supabase
+          .from('workouts')
+          .insert({
+            name: workoutName || `${swimType.charAt(0).toUpperCase() + swimType.slice(1)} swim`,
+            user_id: user.id,
+            duration: durationSeconds,
+            rpe: swimRpe ? parseFloat(swimRpe) : null,
+            session_type: 'swimming',
+            created_at: new Date(workoutDate).toISOString(),
+          })
+          .select('id')
+          .single();
+
+        if (workoutError || !workout) {
+          setError(workoutError?.message ?? 'Failed to save workout.');
+          return;
+        }
+
+        const distanceNum = parseFloat(swimDistance);
+        const distanceKm = swimUnit === 'mi' ? distanceNum * 1.60934 : distanceNum;
+        const avgPace = durationSeconds > 0 && distanceKm > 0
+          ? Math.round((durationSeconds) / (distanceKm * 10))
+          : null;
+
+        const { error: swimError } = await supabase
+          .from('swimming_sessions')
+          .insert({
+            workout_id: workout.id,
+            distance: distanceKm,
+            avg_pace: avgPace,
+            avg_heart_rate: swimAvgHR ? parseInt(swimAvgHR) : null,
+            max_heart_rate: swimMaxHR ? parseInt(swimMaxHR) : null,
+            stroke_type: strokeType || null,
+            pool_length: swimPoolLength ? parseInt(swimPoolLength) : null,
+            swim_type: swimType,
+            notes: swimNotes || null,
+          });
+
+        if (swimError) {
+          setError(swimError.message);
+          return;
+        }
       } else {
         // lifting
         const { data: workout, error: workoutError } = await supabase
@@ -279,6 +350,7 @@ export default function WorkoutForm() {
             duration: durationSeconds,
             rpe: rpe ? parseFloat(rpe) : null,
             session_type: 'lifting',
+            created_at: new Date(workoutDate).toISOString(),
           })
           .select('id')
           .single();
@@ -378,7 +450,7 @@ export default function WorkoutForm() {
 
         {/* ── Session type tabs ── */}
         <div className="flex border-b border-[#EDE5DB] mt-7 mb-6">
-          {(['lifting', 'running', 'cycling'] as const).map(type => (
+          {(['lifting', 'running', 'cycling', 'swimming'] as const).map(type => (
             <button
               key={type}
               type="button"
@@ -411,6 +483,7 @@ export default function WorkoutForm() {
               placeholder={
                 sessionType === 'running' ? 'e.g. Morning easy run' :
                 sessionType === 'cycling' ? 'e.g. Sunday endurance ride' :
+                sessionType === 'swimming' ? 'e.g. Morning freestyle session' :
                 'e.g. Push day'
               }
               className={inputCls}
@@ -874,6 +947,191 @@ export default function WorkoutForm() {
                 <textarea
                   value={cycleNotes}
                   onChange={e => setCycleNotes(e.target.value)}
+                  rows={3}
+                  placeholder="How did it feel? Any observations…"
+                  className={`${inputCls} resize-none`}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className={fieldLabelCls}>Date & Time</label>
+                <input
+                  type="datetime-local"
+                  value={workoutDate}
+                  onChange={e => setWorkoutDate(e.target.value)}
+                  className={inputCls}
+                />
+              </div>
+            </>
+          )}
+
+          {/* ════════════════ SWIMMING ════════════════ */}
+          {sessionType === 'swimming' && (
+            <>
+              {/* Distance & pace card */}
+              <div className={cardCls}>
+                <p className={sectionLabelCls}>Distance & pace</p>
+
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={swimDistance}
+                    onChange={e => setSwimDistance(e.target.value)}
+                    placeholder="0.00"
+                    className={`${inputCls} flex-1 text-2xl font-bold tracking-tight`}
+                    style={{ fontFamily: 'Georgia, serif' }}
+                  />
+                  <div className="flex bg-[#F0E9E0] rounded-xl p-1 gap-0.5">
+                    {(['km', 'mi'] as const).map(u => (
+                      <button
+                        key={u}
+                        type="button"
+                        onClick={() => setSwimUnit(u)}
+                        className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-all ${
+                          swimUnit === u
+                            ? 'bg-white text-[#C4622A] shadow-sm'
+                            : 'text-[#9B8575]'
+                        }`}
+                      >
+                        {u}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {swimPace && (
+                  <div className="flex items-center justify-between bg-[#FDF1EA] border border-[#ECD5C5] rounded-xl px-4 py-3">
+                    <span className="text-[10px] font-semibold uppercase tracking-widest text-[#C4622A]">
+                      Avg pace
+                    </span>
+                    <span className="text-xl font-bold text-[#C4622A]" style={{ fontFamily: 'Georgia, serif' }}>
+                      {swimPace}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Swim type */}
+              <div className={cardCls}>
+                <p className={sectionLabelCls}>Swim type</p>
+                <div className="flex flex-wrap gap-2">
+                  {SWIM_TYPES.map(t => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setSwimType(t)}
+                      className={`px-4 py-1.5 rounded-full border text-sm font-semibold capitalize transition-all ${
+                        swimType === t
+                          ? 'bg-[#C4622A] border-[#C4622A] text-white'
+                          : 'bg-white border-[#EDE5DB] text-[#9B8575] hover:border-[#C4622A] hover:text-[#C4622A]'
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Stroke type */}
+              <div className={cardCls}>
+                <p className={sectionLabelCls}>Stroke</p>
+                <div className="flex flex-wrap gap-2">
+                  {STROKE_TYPES.map(t => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setStrokeType(t)}
+                      className={`px-4 py-1.5 rounded-full border text-sm font-semibold capitalize transition-all ${
+                        strokeType === t
+                          ? 'bg-[#C4622A] border-[#C4622A] text-white'
+                          : 'bg-white border-[#EDE5DB] text-[#9B8575] hover:border-[#C4622A] hover:text-[#C4622A]'
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Heart rate & pool */}
+              <div className={cardCls}>
+                <p className={sectionLabelCls}>Heart rate & pool</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <label className={fieldLabelCls}>Avg HR (bpm)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={swimAvgHR}
+                      onChange={e => setSwimAvgHR(e.target.value)}
+                      placeholder="145"
+                      className={inputCls}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className={fieldLabelCls}>Max HR (bpm)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={swimMaxHR}
+                      onChange={e => setSwimMaxHR(e.target.value)}
+                      placeholder="170"
+                      className={inputCls}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5 col-span-2">
+                    <label className={fieldLabelCls}>Pool length (m)</label>
+                    <div className="flex gap-2">
+                      {(['25', '50', ''] as const).map(len => (
+                        <button
+                          key={len}
+                          type="button"
+                          onClick={() => setSwimPoolLength(len)}
+                          className={`px-4 py-1.5 rounded-full border text-sm font-semibold transition-all ${
+                            swimPoolLength === len
+                              ? 'bg-[#C4622A] border-[#C4622A] text-white'
+                              : 'bg-white border-[#EDE5DB] text-[#9B8575] hover:border-[#C4622A] hover:text-[#C4622A]'
+                          }`}
+                        >
+                          {len === '' ? 'Open water' : `${len}m`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* RPE tap grid */}
+              <div className={cardCls}>
+                <p className={sectionLabelCls}>Perceived effort (RPE)</p>
+                <div className="flex gap-1.5">
+                  {RPE_VALUES.map(v => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setSwimRpe(String(v))}
+                      className={`flex-1 h-9 rounded-lg border text-xs font-semibold transition-all ${
+                        swimRpe === String(v)
+                          ? 'bg-[#C4622A] border-[#C4622A] text-white'
+                          : 'bg-white border-[#EDE5DB] text-[#9B8575] hover:border-[#C4622A] hover:text-[#C4622A]'
+                      }`}
+                    >
+                      {v}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Notes */}
+              <div className="flex flex-col gap-1.5">
+                <label className={fieldLabelCls}>
+                  Notes <span className="text-[#CCC1B5] font-normal">(optional)</span>
+                </label>
+                <textarea
+                  value={swimNotes}
+                  onChange={e => setSwimNotes(e.target.value)}
                   rows={3}
                   placeholder="How did it feel? Any observations…"
                   className={`${inputCls} resize-none`}
